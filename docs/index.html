@@ -232,7 +232,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v2';
+    const CACHE='spyhunter-v3';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -626,14 +626,41 @@ const AUDIO = {
   silentEl: null, silentSrcUrl: null, sessionPrimed: false,
 };
 
-// Iconic Peter Gunn walking bass, ~140 BPM in E minor.
-// E E E E  G E B♭ A   (eighth notes, looped)
-const PETER_GUNN = [
-  { f: 82.41,  d: 0.21 }, { f: 82.41,  d: 0.21 },
-  { f: 82.41,  d: 0.21 }, { f: 82.41,  d: 0.21 },
-  { f: 98.00,  d: 0.21 }, { f: 82.41,  d: 0.21 },
-  { f: 116.54, d: 0.21 }, { f: 110.00, d: 0.21 },
+// Iconic Peter Gunn theme — 2-bar pattern, ~150 BPM, eighth notes.
+// Bass: classic ostinato (E E E E G E B♭ A) repeated.
+// Melody: answering horn line — call-and-response over the bass.
+// Stabs: punchy chord hits on beats 2 and 4 (short staccato).
+const STEP_DUR = 0.20;       // eighth-note duration in seconds (~150 BPM)
+const PATTERN_LEN = 16;      // 2 bars of eighth notes
+
+const PG_BASS = [
+  // Bar 1
+  82.41,  82.41,  82.41,  82.41,
+  98.00,  82.41,  116.54, 110.00,
+  // Bar 2
+  82.41,  82.41,  82.41,  82.41,
+  98.00,  82.41,  116.54, 110.00,
 ];
+
+// Lead horn line — descending answer, in E minor.
+// 0 = rest. Notes chosen to fit Em over the bass.
+const PG_MELODY = [
+  // Bar 1: rest for first half, then "answer" phrase
+  0,        0,        0,        0,
+  659.25,   587.33,   493.88,   440.00,    // E5 D5 B4 A4
+  // Bar 2: rest, then descending resolution
+  0,        0,        0,        0,
+  587.33,   493.88,   440.00,   392.00,    // D5 B4 A4 G4
+];
+
+// Brass stab chords — Em on beat 2, D on beat 4 (each bar)
+// step indexes (0-15): 2 = beat-2 of bar 1, 6 = beat-4 of bar 1, etc.
+const PG_STABS = {
+  2:  [164.81, 196.00, 246.94],   // E3 G3 B3 (Em)
+  6:  [146.83, 185.00, 220.00],   // D3 F#3 A3 (D)
+  10: [164.81, 196.00, 246.94],   // E3 G3 B3 (Em)
+  14: [146.83, 185.00, 220.00],   // D3 F#3 A3 (D)
+};
 
 function audioInit() {
   if (AUDIO.ctx) return;
@@ -665,27 +692,30 @@ function audioResume() {
   iosAudioSessionPrime();
 }
 
-// Build a tiny silent WAV as a Blob URL (cheaper than a giant base64 data URL).
+// Build a ~0.5 second silent WAV as a Blob URL. Needs real duration so iOS
+// counts it as actual media playback (a 1-sample WAV gets ignored and the
+// audio session never upgrades to Playback category).
 function buildSilentWavUrl() {
-  const buf = new ArrayBuffer(46);
+  const sr = 22050;
+  const samples = sr / 2;                // 0.5 seconds
+  const dataSize = samples;              // 8-bit mono = 1 byte/sample
+  const buf = new ArrayBuffer(44 + dataSize);
   const v = new DataView(buf);
-  // RIFF/WAVE header for 1 sample of 8-bit mono PCM @ 8 kHz
   v.setUint32(0,  0x46464952, true);     // "RIFF"
-  v.setUint32(4,  38, true);             // file size - 8
+  v.setUint32(4,  36 + dataSize, true);  // file size - 8
   v.setUint32(8,  0x45564157, true);     // "WAVE"
   v.setUint32(12, 0x20746d66, true);     // "fmt "
   v.setUint32(16, 16, true);             // PCM chunk size
   v.setUint16(20, 1, true);              // PCM
   v.setUint16(22, 1, true);              // mono
-  v.setUint32(24, 8000, true);           // sample rate
-  v.setUint32(28, 8000, true);           // byte rate
+  v.setUint32(24, sr, true);             // sample rate
+  v.setUint32(28, sr, true);             // byte rate (1 byte/sample @ sr)
   v.setUint16(32, 1, true);              // block align
   v.setUint16(34, 8, true);              // bits per sample
   v.setUint32(36, 0x61746164, true);     // "data"
-  v.setUint32(40, 2, true);              // data size
-  // 2 silent samples (0x80 == silence for 8-bit unsigned PCM)
-  v.setUint8(44, 0x80);
-  v.setUint8(45, 0x80);
+  v.setUint32(40, dataSize, true);
+  const bytes = new Uint8Array(buf, 44);
+  bytes.fill(0x80);                      // silence in 8-bit unsigned PCM
   return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
 }
 
@@ -740,12 +770,78 @@ function musicStop() {
 
 function musicScheduler() {
   if (!AUDIO.musicPlaying || !AUDIO.ctx) return;
-  while (AUDIO.musicNextNoteTime < AUDIO.ctx.currentTime + 0.15) {
-    const n = PETER_GUNN[AUDIO.musicStep % PETER_GUNN.length];
-    scheduleBassNote(n.f, AUDIO.musicNextNoteTime, n.d);
-    if (AUDIO.musicStep % 2 === 1) scheduleHat(AUDIO.musicNextNoteTime + n.d * 0.5);
-    AUDIO.musicNextNoteTime += n.d;
+  // Self-heal if iOS suspended the context (e.g., backgrounding) — best
+  // effort, ignored if no longer in a user-gesture window.
+  if (AUDIO.ctx.state === 'suspended') {
+    const p = AUDIO.ctx.resume();
+    if (p && p.catch) p.catch(() => {});
+  }
+  while (AUDIO.musicNextNoteTime < AUDIO.ctx.currentTime + 0.18) {
+    const step = AUDIO.musicStep % PATTERN_LEN;
+    const t = AUDIO.musicNextNoteTime;
+    // Bass: every step
+    scheduleBassNote(PG_BASS[step], t, STEP_DUR);
+    // Hi-hat: offbeats
+    if (step % 2 === 1) scheduleHat(t + STEP_DUR * 0.5);
+    // Melody: when not a rest
+    const m = PG_MELODY[step];
+    if (m > 0) scheduleMelody(m, t, STEP_DUR * 0.95);
+    // Brass stabs: chord on key beats
+    if (PG_STABS[step]) scheduleStab(PG_STABS[step], t);
+    AUDIO.musicNextNoteTime += STEP_DUR;
     AUDIO.musicStep++;
+  }
+}
+
+function scheduleMelody(freq, when, dur) {
+  const c = AUDIO.ctx;
+  // Two detuned saws + a sine for body — sounds like a small horn voice
+  const filt = c.createBiquadFilter();
+  filt.type = 'lowpass';
+  filt.frequency.value = 2200;
+  filt.Q.value = 1.5;
+  const g = c.createGain();
+  g.gain.setValueAtTime(0, when);
+  g.gain.linearRampToValueAtTime(0.18, when + 0.02);
+  g.gain.linearRampToValueAtTime(0.14, when + dur * 0.7);
+  g.gain.exponentialRampToValueAtTime(0.001, when + dur);
+  filt.connect(g); g.connect(AUDIO.musicGain);
+  for (const detune of [-6, 6]) {
+    const osc = c.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(freq, when);
+    osc.detune.value = detune;
+    osc.connect(filt);
+    osc.start(when); osc.stop(when + dur + 0.02);
+  }
+  const sine = c.createOscillator();
+  sine.type = 'sine';
+  sine.frequency.setValueAtTime(freq, when);
+  const sg = c.createGain();
+  sg.gain.setValueAtTime(0, when);
+  sg.gain.linearRampToValueAtTime(0.1, when + 0.02);
+  sg.gain.exponentialRampToValueAtTime(0.001, when + dur);
+  sine.connect(sg); sg.connect(AUDIO.musicGain);
+  sine.start(when); sine.stop(when + dur + 0.02);
+}
+
+function scheduleStab(freqs, when) {
+  const c = AUDIO.ctx;
+  const dur = STEP_DUR * 0.6;
+  const filt = c.createBiquadFilter();
+  filt.type = 'lowpass';
+  filt.frequency.value = 1600;
+  const g = c.createGain();
+  g.gain.setValueAtTime(0, when);
+  g.gain.linearRampToValueAtTime(0.16, when + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.001, when + dur);
+  filt.connect(g); g.connect(AUDIO.musicGain);
+  for (const f of freqs) {
+    const osc = c.createOscillator();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(f, when);
+    osc.connect(filt);
+    osc.start(when); osc.stop(when + dur + 0.02);
   }
 }
 
