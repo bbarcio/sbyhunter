@@ -123,6 +123,28 @@ transition: transform 0.05s, filter 0.05s;
 #btn-oil { background: radial-gradient(circle at 30% 30%, rgba(120,120,140,0.7), rgba(20,20,30,0.6)); border: 2px solid rgba(150,150,180,0.8); }
 #btn-smoke { background: radial-gradient(circle at 30% 30%, rgba(180,200,220,0.7), rgba(80,100,130,0.5)); border: 2px solid rgba(200,220,240,0.8); }
 
+#btn-mute {
+position: absolute;
+top: calc(env(safe-area-inset-top, 12px) + 54px);
+right: 12px;
+width: 32px; height: 32px;
+border-radius: 50%;
+background: rgba(0,0,0,0.55);
+color: #ffcc00;
+border: 1px solid rgba(255,204,0,0.5);
+font-family: 'Courier New', monospace;
+font-weight: bold;
+font-size: 14px;
+display: flex; align-items: center; justify-content: center;
+z-index: 25;
+user-select: none;
+-webkit-user-select: none;
+cursor: pointer;
+text-shadow: 0 0 4px #ffaa00;
+}
+#btn-mute.muted { color: #888; border-color: rgba(120,120,120,0.5); text-shadow: none; }
+#btn-mute:active { transform: scale(0.92); }
+
 #overlay {
 position: absolute; inset: 0;
 background: rgba(0,0,0,0.88);
@@ -276,6 +298,8 @@ if('serviceWorker' in navigator){
 <div id="btn-guns" class="btn">GUNS</div>
 <div id="btn-smoke" class="btn disabled">SMK</div>
 <div id="btn-oil" class="btn disabled">OIL</div>
+
+<div id="btn-mute" title="Sound on/off">♪</div>
 
 <div id="overlay">
   <h1>SPY HUNTER</h1>
@@ -587,6 +611,261 @@ function findNearestTree(fromX, fromZ, side, maxDistZ) {
 }
 
 // ============================================================
+// AUDIO — Peter Gunn-style bass loop + procedural SFX
+// All synthesized via Web Audio API. iOS requires resume on user gesture.
+// ============================================================
+const AUDIO = {
+  ctx: null, master: null, musicGain: null, sfxGain: null,
+  muted: false, musicPlaying: false,
+  musicNextNoteTime: 0, musicStep: 0, musicTimer: null,
+  lastFireTime: 0,
+};
+
+// Iconic Peter Gunn walking bass, ~140 BPM in E minor.
+// E E E E  G E B♭ A   (eighth notes, looped)
+const PETER_GUNN = [
+  { f: 82.41,  d: 0.21 }, { f: 82.41,  d: 0.21 },
+  { f: 82.41,  d: 0.21 }, { f: 82.41,  d: 0.21 },
+  { f: 98.00,  d: 0.21 }, { f: 82.41,  d: 0.21 },
+  { f: 116.54, d: 0.21 }, { f: 110.00, d: 0.21 },
+];
+
+function audioInit() {
+  if (AUDIO.ctx) return;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  AUDIO.ctx = new AC();
+  AUDIO.master = AUDIO.ctx.createGain();
+  AUDIO.master.connect(AUDIO.ctx.destination);
+  AUDIO.musicGain = AUDIO.ctx.createGain();
+  AUDIO.musicGain.gain.value = 0.45;
+  AUDIO.musicGain.connect(AUDIO.master);
+  AUDIO.sfxGain = AUDIO.ctx.createGain();
+  AUDIO.sfxGain.gain.value = 0.65;
+  AUDIO.sfxGain.connect(AUDIO.master);
+  try {
+    if (localStorage.getItem('sbyhunter.muted') === '1') AUDIO.muted = true;
+  } catch(e) {}
+  AUDIO.master.gain.value = AUDIO.muted ? 0 : 1;
+  const btn = document.getElementById('btn-mute');
+  if (btn) btn.classList.toggle('muted', AUDIO.muted);
+}
+
+function audioResume() {
+  audioInit();
+  if (AUDIO.ctx && AUDIO.ctx.state === 'suspended') AUDIO.ctx.resume();
+}
+
+function audioSetMuted(m) {
+  AUDIO.muted = m;
+  if (AUDIO.master) AUDIO.master.gain.value = m ? 0 : 1;
+  try { localStorage.setItem('sbyhunter.muted', m ? '1' : '0'); } catch(e) {}
+  const btn = document.getElementById('btn-mute');
+  if (btn) btn.classList.toggle('muted', m);
+}
+
+function musicStart() {
+  if (!AUDIO.ctx || AUDIO.musicPlaying) return;
+  AUDIO.musicPlaying = true;
+  AUDIO.musicStep = 0;
+  AUDIO.musicNextNoteTime = AUDIO.ctx.currentTime + 0.08;
+  if (AUDIO.musicTimer) clearInterval(AUDIO.musicTimer);
+  AUDIO.musicTimer = setInterval(musicScheduler, 25);
+}
+
+function musicStop() {
+  AUDIO.musicPlaying = false;
+  if (AUDIO.musicTimer) { clearInterval(AUDIO.musicTimer); AUDIO.musicTimer = null; }
+}
+
+function musicScheduler() {
+  if (!AUDIO.musicPlaying || !AUDIO.ctx) return;
+  while (AUDIO.musicNextNoteTime < AUDIO.ctx.currentTime + 0.15) {
+    const n = PETER_GUNN[AUDIO.musicStep % PETER_GUNN.length];
+    scheduleBassNote(n.f, AUDIO.musicNextNoteTime, n.d);
+    if (AUDIO.musicStep % 2 === 1) scheduleHat(AUDIO.musicNextNoteTime + n.d * 0.5);
+    AUDIO.musicNextNoteTime += n.d;
+    AUDIO.musicStep++;
+  }
+}
+
+function noiseBuf(dur) {
+  const c = AUDIO.ctx;
+  const len = Math.max(1, Math.floor(c.sampleRate * dur));
+  const buf = c.createBuffer(1, len, c.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  return buf;
+}
+
+function scheduleBassNote(freq, when, dur) {
+  const c = AUDIO.ctx;
+  const osc = c.createOscillator();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(freq, when);
+  const filt = c.createBiquadFilter();
+  filt.type = 'lowpass';
+  filt.frequency.setValueAtTime(440, when);
+  filt.Q.value = 3;
+  const g = c.createGain();
+  g.gain.setValueAtTime(0, when);
+  g.gain.linearRampToValueAtTime(0.5, when + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.001, when + dur * 0.95);
+  osc.connect(filt); filt.connect(g); g.connect(AUDIO.musicGain);
+  osc.start(when);
+  osc.stop(when + dur);
+}
+
+function scheduleHat(when) {
+  const c = AUDIO.ctx;
+  const src = c.createBufferSource();
+  src.buffer = noiseBuf(0.05);
+  const hp = c.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 6000;
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.14, when);
+  g.gain.exponentialRampToValueAtTime(0.001, when + 0.045);
+  src.connect(hp); hp.connect(g); g.connect(AUDIO.musicGain);
+  src.start(when); src.stop(when + 0.05);
+}
+
+function sfxFire() {
+  if (!AUDIO.ctx) return;
+  const t = AUDIO.ctx.currentTime;
+  if (t - AUDIO.lastFireTime < 0.05) return;
+  AUDIO.lastFireTime = t;
+  const c = AUDIO.ctx;
+  const osc = c.createOscillator();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(820, t);
+  osc.frequency.exponentialRampToValueAtTime(180, t + 0.07);
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.18, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+  osc.connect(g); g.connect(AUDIO.sfxGain);
+  osc.start(t); osc.stop(t + 0.09);
+  const n = c.createBufferSource();
+  n.buffer = noiseBuf(0.06);
+  const ng = c.createGain();
+  ng.gain.setValueAtTime(0.12, t);
+  ng.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+  n.connect(ng); ng.connect(AUDIO.sfxGain);
+  n.start(t); n.stop(t + 0.06);
+}
+
+function sfxExplode(big) {
+  if (!AUDIO.ctx) return;
+  const c = AUDIO.ctx, t = c.currentTime;
+  const dur = big ? 0.7 : 0.34;
+  const n = c.createBufferSource();
+  n.buffer = noiseBuf(dur);
+  const lp = c.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(big ? 2400 : 1600, t);
+  lp.frequency.exponentialRampToValueAtTime(160, t + dur);
+  const g = c.createGain();
+  g.gain.setValueAtTime(big ? 0.75 : 0.45, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  n.connect(lp); lp.connect(g); g.connect(AUDIO.sfxGain);
+  n.start(t); n.stop(t + dur);
+}
+
+function sfxOilDrop() {
+  if (!AUDIO.ctx) return;
+  const c = AUDIO.ctx, t = c.currentTime;
+  const osc = c.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(200, t);
+  osc.frequency.exponentialRampToValueAtTime(60, t + 0.2);
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.4, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+  osc.connect(g); g.connect(AUDIO.sfxGain);
+  osc.start(t); osc.stop(t + 0.24);
+}
+
+function sfxLevelUp() {
+  if (!AUDIO.ctx) return;
+  const c = AUDIO.ctx, t = c.currentTime;
+  [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
+    const at = t + i * 0.09;
+    const osc = c.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(f, at);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0, at);
+    g.gain.linearRampToValueAtTime(0.28, at + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.001, at + 0.18);
+    osc.connect(g); g.connect(AUDIO.sfxGain);
+    osc.start(at); osc.stop(at + 0.2);
+  });
+}
+
+function sfxCivilianWarn() {
+  if (!AUDIO.ctx) return;
+  const c = AUDIO.ctx, t = c.currentTime;
+  for (let i = 0; i < 2; i++) {
+    const at = t + i * 0.13;
+    const osc = c.createOscillator();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(720 + i * 80, at);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.26, at);
+    g.gain.exponentialRampToValueAtTime(0.001, at + 0.1);
+    osc.connect(g); g.connect(AUDIO.sfxGain);
+    osc.start(at); osc.stop(at + 0.11);
+  }
+}
+
+function sfxBump() {
+  if (!AUDIO.ctx) return;
+  const c = AUDIO.ctx, t = c.currentTime;
+  const n = c.createBufferSource();
+  n.buffer = noiseBuf(0.12);
+  const lp = c.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 700;
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.38, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+  n.connect(lp); lp.connect(g); g.connect(AUDIO.sfxGain);
+  n.start(t); n.stop(t + 0.12);
+}
+
+function sfxPickup() {
+  if (!AUDIO.ctx) return;
+  const c = AUDIO.ctx, t = c.currentTime;
+  const osc = c.createOscillator();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(440, t);
+  osc.frequency.exponentialRampToValueAtTime(1320, t + 0.18);
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.3, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+  osc.connect(g); g.connect(AUDIO.sfxGain);
+  osc.start(t); osc.stop(t + 0.24);
+}
+
+// Mute button wiring + global gesture-to-resume
+(function() {
+  const btn = document.getElementById('btn-mute');
+  if (btn) {
+    const toggle = e => {
+      if (e) e.preventDefault();
+      audioResume();
+      audioSetMuted(!AUDIO.muted);
+    };
+    btn.addEventListener('click', toggle);
+    btn.addEventListener('touchstart', toggle, { passive: false });
+  }
+  // Resume audio on first interaction anywhere (iOS gesture requirement)
+  const wake = () => { audioResume(); };
+  document.addEventListener('touchstart', wake, { once: true, passive: true });
+  document.addEventListener('mousedown', wake, { once: true });
+})();
+
+// ============================================================
 // PLAYER
 // ============================================================
 const player = {
@@ -602,7 +881,7 @@ const player = {
   alive: true,
   // Weapon ammo per type. 0 = disabled. Max cap per type below.
   ammo: { missiles: 0, oil: 0, smoke: 0 },
-  ammoMax: 5
+  ammoMax: 8
 };
 
 // Player's screen Y at speed 0 (cruise position near bottom of play area).
@@ -712,11 +991,15 @@ function startGame() {
   gameMode = 'playing';
   state = 'playing';
   overlay.classList.add('hidden');
+  audioResume();
+  musicStart();
 }
 
 function endGame() {
   state = 'gameover';
   gameMode = 'gameover';
+  musicStop();
+  sfxExplode(true);
   document.querySelector('#overlay h1').textContent = 'GAME OVER';
   document.querySelector('#overlay h2').textContent = `SCORE: ${String(player.score).padStart(6, '0')}`;
   document.querySelector('#overlay p').innerHTML = 'You served your country well, agent.<br>The Interceptor awaits your return.';
@@ -745,6 +1028,7 @@ function showLevelBanner(msg) {
 function triggerCrash(crashX) {
   if (gameMode !== 'playing') return;
   player.lives -= 1;
+  sfxExplode(false);
   explode(crashX, trackPos, '#ff3333', 20);
   wrecks.push({
     x: crashX, z: trackPos,
@@ -875,6 +1159,7 @@ function update(dt) {
     levelStartTrackPos = trackPos;
     showLevelBanner('LEVEL ' + currentLevel);
     document.getElementById('level').textContent = String(currentLevel);
+    sfxLevelUp();
   }
 
   if (levelBannerTimer > 0) {
@@ -886,6 +1171,7 @@ function update(dt) {
   fireCooldown -= dt;
   if (gameMode === 'playing' && input.gunsHeld && fireCooldown <= 0) {
     bullets.push({ x: player.x, z: trackPos + 30, vz: 700 });
+    sfxFire();
     fireCooldown = 0.11;
   }
 
@@ -1182,6 +1468,7 @@ function update(dt) {
               e.vx += (Math.random() - 0.5) * 18;
             } else {
               // Final shot — spin out
+              sfxExplode(false);
               explode(b.x, b.z, '#ffcc66', 10);
               e.state = 'spinning';
               e.stateTime = 0;
@@ -1214,6 +1501,7 @@ function update(dt) {
               e.vx += (Math.random() - 0.5) * 30;
             } else {
               // Third hit: full penalty
+              sfxCivilianWarn();
               explode(b.x, b.z, '#ffcc66', 12);
               e.state = 'spinning';
               e.stateTime = 0;
@@ -1261,6 +1549,7 @@ function update(dt) {
         if (playerClosingVx > 5) {
           const bumpDir = Math.sign(dx);
           const bumpForce = Math.min(playerClosingVx, 200);
+          sfxBump();
 
           if (e.faction === 'enemy') {
             if (e.bulletproof) {
@@ -1520,13 +1809,14 @@ function deliverWeapon(v) {
   v.delivered = true;
   v.state = 'delivered_exit';
   v.stateTimer = 0;
-  // Top up the relevant ammo by 3, capped at max
+  // Top up the relevant ammo by 5, capped at max
   const type = v.weaponType;
-  player.ammo[type] = Math.min(player.ammoMax, player.ammo[type] + 3);
+  player.ammo[type] = Math.min(player.ammoMax, player.ammo[type] + 5);
   // Brief invincibility so player doesn't get rammed mid-pickup
   player.invincibleTimer = Math.max(player.invincibleTimer, 1.0);
   // Score + visual sparkle
   player.score += 250;
+  sfxPickup();
   for (let k = 0; k < 16; k++) {
     particles.push({
       x: player.x + (Math.random() - 0.5) * 16,
@@ -1664,6 +1954,7 @@ function dropOilSlick() {
   if (gameMode !== 'playing' || !player.alive) return;
   if (player.ammo.oil <= 0) return;
   player.ammo.oil -= 1;
+  sfxOilDrop();
   oilSlicks.push({
     x: player.x,
     z: trackPos - 18,         // just behind the player
@@ -2322,54 +2613,66 @@ function drawWeaponsVan(v) {
   ctx.fillRect( w/2 - 1, h/2 - 12, 2, 10);
 
   // === Weapon-type identifier on the side panel ===
-  // Background plate
-  let labelColor = '#888';
-  let labelText = '???';
-  let glyphColor = '#fff';
+  // Background plate color per weapon
+  let plateColor = '#888';
+  if (v.weaponType === 'oil')       plateColor = '#d9d4c2';
+  else if (v.weaponType === 'missiles') plateColor = '#aa4400';
+  else if (v.weaponType === 'smoke')    plateColor = '#7a8898';
+
+  // Logo plate — taller than before, sits in the upper trailer section,
+  // well clear of the WEAPONS text below
+  const plateY = -h/2 + 28;
+  const plateH = 22;
+  ctx.fillStyle = plateColor;
+  ctx.fillRect(-w/2 + 4, plateY, w - 8, plateH);
+  // Thin dark border for contrast
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(-w/2 + 4, plateY, w - 8, plateH);
+
+  // Center of the plate (where the logo goes)
+  const gx = 0;
+  const gy = plateY + plateH / 2;
+
   if (v.weaponType === 'oil') {
-    labelColor = '#1a1a1a';
-    labelText = 'OIL';
-    glyphColor = '#777';
-  } else if (v.weaponType === 'missiles') {
-    labelColor = '#aa4400';
-    labelText = 'MSL';
-    glyphColor = '#ffcc44';
-  } else if (v.weaponType === 'smoke') {
-    labelColor = '#7a8898';
-    labelText = 'SMK';
-    glyphColor = '#fff';
-  }
-  // Big colored band on each side
-  ctx.fillStyle = labelColor;
-  ctx.fillRect(-w/2 + 4, -h/2 + 32, w - 8, 14);
-  // Glyph: small icon depicting the weapon
-  ctx.fillStyle = glyphColor;
-  if (v.weaponType === 'oil') {
+    // Miniature oil slick — same visual vocabulary as the road slicks
+    ctx.fillStyle = '#1a1a18';
     ctx.beginPath();
-    ctx.ellipse(0, -h/2 + 39, 8, 3, 0, 0, Math.PI*2);
+    ctx.ellipse(gx, gy, 12, 6, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#0a0a08';
+    ctx.beginPath();
+    ctx.ellipse(gx, gy, 8, 4, 0, 0, Math.PI*2);
+    ctx.fill();
+    // Sheen highlight
+    ctx.fillStyle = 'rgba(180, 160, 200, 0.7)';
+    ctx.beginPath();
+    ctx.ellipse(gx - 3, gy - 1, 2.5, 1.2, 0, 0, Math.PI*2);
     ctx.fill();
   } else if (v.weaponType === 'missiles') {
+    ctx.fillStyle = '#ffcc44';
     ctx.beginPath();
-    ctx.moveTo(-7, -h/2 + 41);
-    ctx.lineTo(7, -h/2 + 41);
-    ctx.lineTo(0, -h/2 + 33);
+    ctx.moveTo(gx - 8, gy + 5);
+    ctx.lineTo(gx + 8, gy + 5);
+    ctx.lineTo(gx,     gy - 6);
     ctx.closePath();
     ctx.fill();
   } else if (v.weaponType === 'smoke') {
+    ctx.fillStyle = '#ffffff';
     ctx.beginPath();
-    ctx.arc(-3, -h/2 + 39, 3, 0, Math.PI*2);
-    ctx.arc(3, -h/2 + 38, 4, 0, Math.PI*2);
+    ctx.arc(gx - 4, gy + 1, 4, 0, Math.PI*2);
+    ctx.arc(gx + 3, gy - 1, 5, 0, Math.PI*2);
+    ctx.arc(gx + 1, gy + 3, 3, 0, Math.PI*2);
     ctx.fill();
   }
 
-  // "WEAPONS" text below
+  // "WEAPONS" text below the logo plate — single label, no overlap
   ctx.fillStyle = '#ffcc00';
   ctx.font = 'bold 6px Courier New, monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('WEAPONS', 0, 8);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 8px Courier New, monospace';
-  ctx.fillText(labelText, 0, -h/2 + 56);
+  ctx.textBaseline = 'top';
+  ctx.fillText('WEAPONS', 0, plateY + plateH + 3);
+  ctx.textBaseline = 'alphabetic';
 
   ctx.restore();
 }
