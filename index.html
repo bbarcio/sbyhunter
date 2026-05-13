@@ -1,0 +1,2431 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#000000">
+<title>Spy Hunter</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #000;
+    overflow: hidden;
+    position: fixed;
+    overscroll-behavior: none;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  }
+  #game { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block; background: #000; }
+  #hud {
+    position: absolute;
+    top: env(safe-area-inset-top, 12px);
+    left: 0; right: 0;
+    display: flex;
+    justify-content: space-between;
+    padding: 12px 18px;
+    color: #ffcc00;
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    font-size: 14px;
+    text-shadow: 0 0 6px #ffaa00;
+    pointer-events: none;
+    z-index: 10;
+    letter-spacing: 2px;
+  }
+  .hud-col { display: flex; flex-direction: column; gap: 2px; }
+  .hud-col.right { align-items: flex-end; }
+  .hud-label { font-size: 10px; color: #888; letter-spacing: 1px; }
+
+#warning {
+position: absolute;
+top: 60px;
+left: 50%;
+transform: translateX(-50%);
+background: rgba(180, 0, 0, 0.85);
+color: #fff;
+font-family: ‘Courier New’, monospace;
+font-weight: bold;
+font-size: 12px;
+letter-spacing: 3px;
+padding: 6px 14px;
+border: 1px solid #ff4444;
+border-radius: 3px;
+z-index: 15;
+pointer-events: none;
+text-shadow: 0 0 6px #ff0000;
+box-shadow: 0 0 14px rgba(255, 0, 0, 0.6);
+opacity: 0;
+transition: opacity 0.15s;
+}
+#warning.show { opacity: 1; }
+
+#level-banner {
+position: absolute;
+top: 40%;
+left: 50%;
+transform: translate(-50%, -50%) scale(0.6);
+background: rgba(0, 0, 0, 0.7);
+color: #ffcc00;
+font-family: ‘Courier New’, monospace;
+font-weight: bold;
+font-size: 30px;
+letter-spacing: 6px;
+padding: 16px 36px;
+border: 2px solid #ffcc00;
+border-radius: 4px;
+z-index: 18;
+pointer-events: none;
+text-shadow: 0 0 14px #ff8800;
+box-shadow: 0 0 30px rgba(255, 204, 0, 0.5);
+opacity: 0;
+transition: opacity 0.4s, transform 0.4s;
+}
+#level-banner.show {
+opacity: 1;
+transform: translate(-50%, -50%) scale(1);
+}
+
+.btn {
+position: absolute;
+width: 58px; height: 58px;
+border-radius: 50%;
+color: #fff;
+font-family: ‘Courier New’, monospace;
+font-weight: bold;
+font-size: 9px;
+letter-spacing: 0.5px;
+z-index: 20;
+display: flex;
+align-items: center;
+justify-content: center;
+text-align: center;
+text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+box-shadow: 0 3px 10px rgba(0,0,0,0.7), inset 0 -2px 5px rgba(0,0,0,0.4);
+user-select: none;
+-webkit-user-select: none;
+transition: transform 0.05s, filter 0.05s;
+}
+.btn.active { transform: scale(0.9); filter: brightness(1.4); }
+.btn.disabled { opacity: 0.32; filter: grayscale(0.5); }
+#btn-guns { background: radial-gradient(circle at 30% 30%, rgba(255,80,80,0.7), rgba(120,20,20,0.5)); border: 2px solid rgba(255,120,120,0.8); }
+#btn-missiles { background: radial-gradient(circle at 30% 30%, rgba(255,160,40,0.7), rgba(160,60,10,0.5)); border: 2px solid rgba(255,180,80,0.8); }
+#btn-oil { background: radial-gradient(circle at 30% 30%, rgba(120,120,140,0.7), rgba(20,20,30,0.6)); border: 2px solid rgba(150,150,180,0.8); }
+#btn-smoke { background: radial-gradient(circle at 30% 30%, rgba(180,200,220,0.7), rgba(80,100,130,0.5)); border: 2px solid rgba(200,220,240,0.8); }
+
+#overlay {
+position: absolute; inset: 0;
+background: rgba(0,0,0,0.88);
+z-index: 30;
+display: flex;
+flex-direction: column;
+align-items: center;
+justify-content: center;
+color: #ffcc00;
+font-family: ‘Courier New’, monospace;
+text-align: center;
+padding: 24px;
+}
+#overlay.hidden { display: none; }
+#overlay h1 {
+font-size: 38px; letter-spacing: 6px; margin-bottom: 8px;
+text-shadow: 0 0 16px #ff8800, 0 0 4px #fff; color: #ff3333;
+}
+#overlay h2 { font-size: 14px; color: #fff; letter-spacing: 4px; margin-bottom: 24px; }
+#overlay p { color: #aaa; font-size: 12px; line-height: 1.7; max-width: 320px; margin-bottom: 18px; letter-spacing: 1px; }
+#overlay .key { color: #ffcc00; font-weight: bold; }
+#overlay .warn { color: #ff5544; font-weight: bold; }
+#start-btn {
+background: #ffcc00; color: #000; border: none;
+padding: 14px 36px;
+font-family: ‘Courier New’, monospace; font-weight: bold; font-size: 16px; letter-spacing: 3px;
+border-radius: 4px; cursor: pointer;
+box-shadow: 0 0 20px rgba(255,204,0,0.6);
+margin-top: 8px;
+}
+#start-btn:active { transform: scale(0.96); }
+</style>
+
+</head>
+<body>
+
+<canvas id="game"></canvas>
+
+<div id="hud">
+  <div class="hud-col">
+    <div class="hud-label">SCORE</div>
+    <div id="score">000000</div>
+  </div>
+  <div class="hud-col" style="align-items:center;">
+    <div class="hud-label">LVL</div>
+    <div id="level">1</div>
+  </div>
+  <div class="hud-col" style="align-items:center;">
+    <div class="hud-label">SPEED</div>
+    <div id="speed">0</div>
+  </div>
+  <div class="hud-col right">
+    <div class="hud-label">LIVES</div>
+    <div id="lives">▲▲▲</div>
+  </div>
+</div>
+
+<div id="level-banner"></div>
+
+<div id="warning">⚠ CIVILIAN HIT ⚠</div>
+
+<div id="btn-missiles" class="btn disabled">MSL</div>
+<div id="btn-guns" class="btn">GUNS</div>
+<div id="btn-smoke" class="btn disabled">SMK</div>
+<div id="btn-oil" class="btn disabled">OIL</div>
+
+<div id="overlay">
+  <h1>SPY HUNTER</h1>
+  <h2>G-6155 INTERCEPTOR</h2>
+  <p>
+    <span class="key">DRAG</span> to steer · <span class="key">UP</span> to accelerate<br>
+    Shoot <span class="warn">BLUE</span> Switchblades. <span class="key">BUMP</span> into trees for bonus.<br>
+    <span class="warn">OLIVE</span> Bulletproof cars (Lvl 2+): bullets bounce —<br>
+    bump them off the road to kill!<br>
+    Catch the gray <span class="key">WEAPONS VAN</span> from behind to upgrade.<br>
+    Drop <span class="key">OIL</span> behind you to spin out chasers!<br>
+    <span class="warn">DO NOT</span> shoot civilians.
+  </p>
+  <button id="start-btn">START MISSION</button>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+// ============================================================
+// SPY HUNTER — v0.6
+// + Civilians take 2 hits (1st = warning dink, 2nd = full penalty)
+// + Truck rest position is track-RELATIVE so it stays put visually
+// + Difficulty calmed down: lower spawn rates, minimum gap between cars
+// ============================================================
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+const VW = 360;
+const VH = 640;
+let scale = 1, offsetX = 0, offsetY = 0;
+
+const BAND_HEIGHT = 170;
+const BAND_TOP = VH - BAND_HEIGHT;
+const PLAY_TOP = 0;
+const PLAY_BOTTOM = BAND_TOP;
+const PLAY_HEIGHT = PLAY_BOTTOM - PLAY_TOP;
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  const sx = w / VW, sy = h / VH;
+  scale = Math.min(sx, sy);
+  offsetX = (w - VW * scale) / 2;
+  offsetY = (h - VH * scale) / 2;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  positionButtons();
+}
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 100));
+
+function toVirtual(clientX, clientY) {
+  return { x: (clientX - offsetX) / scale, y: (clientY - offsetY) / scale };
+}
+function virtualToScreen(vx, vy) {
+  return { x: vx * scale + offsetX, y: vy * scale + offsetY };
+}
+
+function positionButtons() {
+  const btnSize = 58;
+  const gap = 6;
+  const bandBotScreen = virtualToScreen(0, VH).y;
+
+  // Vertical column on the LEFT, anchored at the bottom (thumb home position).
+  // Order top→bottom: MSL, SMK, OIL, GUNS — so the most-used (GUNS) is closest to the thumb.
+  // Column extends ABOVE the steering band into the left grass area; this is acceptable
+  // since the grass is off-road visual space (no enemies render there).
+  const leftX = Math.max(8, offsetX + 6);
+
+  // Bottom button (GUNS): align with bottom of band area, with a safe-area margin
+  const safeBottom = 24;     // distance above screen bottom
+  const gunsY = window.innerHeight - btnSize - safeBottom;
+  const oilY  = gunsY  - btnSize - gap;
+  const smkY  = oilY   - btnSize - gap;
+  const mslY  = smkY   - btnSize - gap;
+
+  document.getElementById('btn-guns').style.left     = leftX + 'px';
+  document.getElementById('btn-guns').style.top      = gunsY + 'px';
+  document.getElementById('btn-oil').style.left      = leftX + 'px';
+  document.getElementById('btn-oil').style.top       = oilY  + 'px';
+  document.getElementById('btn-smoke').style.left    = leftX + 'px';
+  document.getElementById('btn-smoke').style.top     = smkY  + 'px';
+  document.getElementById('btn-missiles').style.left = leftX + 'px';
+  document.getElementById('btn-missiles').style.top  = mslY  + 'px';
+}
+
+resize();
+
+// ============================================================
+// INPUT
+// ============================================================
+const input = {
+  dragging: false,
+  dragX: VW / 2,
+  dragY: BAND_TOP + BAND_HEIGHT * 0.7,
+  activeTouchId: null,
+  gunsHeld: false,
+  missilesHeld: false,
+  oilHeld: false,
+  smokeHeld: false
+};
+
+function addBtnEvents(elId, key, onPress) {
+  const el = document.getElementById(elId);
+  const on = e => {
+    e.preventDefault();
+    if (el.classList.contains('disabled')) return;
+    input[key] = true;
+    el.classList.add('active');
+    if (onPress) onPress();
+  };
+  const off = e => {
+    e.preventDefault();
+    input[key] = false;
+    el.classList.remove('active');
+  };
+  el.addEventListener('touchstart', on, { passive: false });
+  el.addEventListener('touchend', off, { passive: false });
+  el.addEventListener('touchcancel', off, { passive: false });
+  el.addEventListener('mousedown', on);
+  el.addEventListener('mouseup', off);
+  el.addEventListener('mouseleave', off);
+}
+addBtnEvents('btn-guns', 'gunsHeld');
+addBtnEvents('btn-missiles', 'missilesHeld');
+addBtnEvents('btn-oil', 'oilHeld', () => dropOilSlick());
+addBtnEvents('btn-smoke', 'smokeHeld');
+
+function isInBand(vx, vy) {
+  return vy >= BAND_TOP && vy <= VH && vx >= 0 && vx <= VW;
+}
+
+canvas.addEventListener('touchstart', e => {
+  for (const t of e.changedTouches) {
+    const v = toVirtual(t.clientX, t.clientY);
+    if (isInBand(v.x, v.y) && input.activeTouchId === null) {
+      e.preventDefault();
+      input.activeTouchId = t.identifier;
+      input.dragging = true;
+      input.dragX = v.x;
+      input.dragY = v.y;
+    }
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === input.activeTouchId) {
+      e.preventDefault();
+      const v = toVirtual(t.clientX, t.clientY);
+      input.dragX = Math.max(0, Math.min(VW, v.x));
+      input.dragY = Math.max(BAND_TOP, Math.min(VH, v.y));
+    }
+  }
+}, { passive: false });
+
+function endTouch(e) {
+  for (const t of e.changedTouches) {
+    if (t.identifier === input.activeTouchId) {
+      e.preventDefault();
+      input.activeTouchId = null;
+      input.dragging = false;
+    }
+  }
+}
+canvas.addEventListener('touchend', endTouch, { passive: false });
+canvas.addEventListener('touchcancel', endTouch, { passive: false });
+
+canvas.addEventListener('mousedown', e => {
+  const v = toVirtual(e.clientX, e.clientY);
+  if (isInBand(v.x, v.y)) {
+    input.dragging = true;
+    input.dragX = v.x;
+    input.dragY = v.y;
+  }
+});
+canvas.addEventListener('mousemove', e => {
+  if (!input.dragging) return;
+  const v = toVirtual(e.clientX, e.clientY);
+  input.dragX = Math.max(0, Math.min(VW, v.x));
+  input.dragY = Math.max(BAND_TOP, Math.min(VH, v.y));
+});
+window.addEventListener('mouseup', () => { input.dragging = false; });
+
+// ============================================================
+// ROAD
+// ============================================================
+const ROAD = {
+  defaultHalfWidth: 90,
+  narrowHalfWidth: 60,
+  wideHalfWidth: 120,
+  centerX: VW / 2,
+  widthEvents: [],
+  _nextEventZ: 500
+};
+
+function roadHalfWidthAt(z) {
+  for (const ev of ROAD.widthEvents) {
+    if (z >= ev.zStart && z <= ev.zEnd) {
+      const t = (z - ev.zStart) / (ev.zEnd - ev.zStart);
+      const s = t * t * (3 - 2 * t);
+      return ev.startHalfWidth + (ev.endHalfWidth - ev.startHalfWidth) * s;
+    }
+  }
+  return ROAD.defaultHalfWidth;
+}
+
+function maybeAddRoadEvents() {
+  const lookahead = trackPos + 2000;
+  while (ROAD._nextEventZ < lookahead) {
+    const eventType = Math.random();
+    const z = ROAD._nextEventZ;
+    const len = 400 + Math.random() * 400;
+    const transition = 80;
+    const startHW = ROAD.defaultHalfWidth;
+    let targetHW = ROAD.defaultHalfWidth;
+    if (eventType < 0.35) targetHW = ROAD.wideHalfWidth;
+    else if (eventType < 0.55) targetHW = ROAD.narrowHalfWidth;
+    else {
+      ROAD._nextEventZ += 600 + Math.random() * 800;
+      continue;
+    }
+    ROAD.widthEvents.push({ zStart: z, zEnd: z + transition, startHalfWidth: startHW, endHalfWidth: targetHW });
+    ROAD.widthEvents.push({ zStart: z + transition, zEnd: z + transition + len, startHalfWidth: targetHW, endHalfWidth: targetHW });
+    ROAD.widthEvents.push({ zStart: z + transition + len, zEnd: z + transition * 2 + len, startHalfWidth: targetHW, endHalfWidth: startHW });
+    ROAD._nextEventZ = z + transition * 2 + len + 200 + Math.random() * 400;
+  }
+  while (ROAD.widthEvents.length > 0 && ROAD.widthEvents[0].zEnd < trackPos - 200) {
+    ROAD.widthEvents.shift();
+  }
+}
+
+// ============================================================
+// TREES
+// ============================================================
+const trees = [];
+let nextTreeZ = 200;
+
+function maybeAddTrees() {
+  const lookahead = trackPos + 1500;
+  while (nextTreeZ < lookahead) {
+    const z = nextTreeZ;
+    const hw = roadHalfWidthAt(z);
+    // Higher density: most rows now place trees on each side
+    if (Math.random() < 0.78) {
+      const margin = 4 + Math.random() * (ROAD.centerX - hw - 16);
+      trees.push({
+        x: ROAD.centerX - hw - margin - 6,
+        z: z,
+        kind: Math.random() < 0.7 ? 'pine' : 'bush',
+        size: 0.85 + Math.random() * 0.4
+      });
+    }
+    if (Math.random() < 0.78) {
+      const margin = 4 + Math.random() * (ROAD.centerX - hw - 16);
+      trees.push({
+        x: ROAD.centerX + hw + margin + 6,
+        z: z,
+        kind: Math.random() < 0.7 ? 'pine' : 'bush',
+        size: 0.85 + Math.random() * 0.4
+      });
+    }
+    // Occasional cluster: drop 2-3 extra nearby trees on one side
+    if (Math.random() < 0.12) {
+      const side = Math.random() < 0.5 ? -1 : 1;
+      const clusterCount = 2 + Math.floor(Math.random() * 2);
+      for (let c = 0; c < clusterCount; c++) {
+        const margin = 4 + Math.random() * (ROAD.centerX - hw - 16);
+        trees.push({
+          x: ROAD.centerX + side * (hw + margin + 6 + c * 6),
+          z: z + (Math.random() - 0.5) * 30,
+          kind: Math.random() < 0.7 ? 'pine' : 'bush',
+          size: 0.85 + Math.random() * 0.4
+        });
+      }
+    }
+    // Closer spacing in Z for a denser feel
+    nextTreeZ += 22 + Math.random() * 35;
+  }
+  for (let i = trees.length - 1; i >= 0; i--) {
+    if (trees[i].z < trackPos - 160) trees.splice(i, 1);
+  }
+}
+
+function findNearestTree(fromX, fromZ, side, maxDistZ) {
+  let best = null;
+  let bestDist = Infinity;
+  for (const t of trees) {
+    const treeSide = (t.x < ROAD.centerX) ? -1 : 1;
+    if (treeSide !== side) continue;
+    if (t.z < fromZ) continue;
+    if (t.z - fromZ > maxDistZ) continue;
+    const dz = t.z - fromZ;
+    const dx = Math.abs(t.x - (ROAD.centerX + fromX));
+    const dist = dz + dx * 0.5;
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = t;
+    }
+  }
+  return best;
+}
+
+// ============================================================
+// PLAYER
+// ============================================================
+const player = {
+  x: 0,
+  prevX: 0,        // last frame's x — used to compute vx for bumping
+  vx: 0,           // instantaneous lateral velocity (computed each frame)
+  speed: 0,
+  maxSpeed: 380,   // ~20% slower than v0.7
+  cruiseSpeed: 0.35,
+  lives: 3,
+  score: 0,
+  invincibleTimer: 0,
+  alive: true,
+  // Weapon ammo per type. 0 = disabled. Max cap per type below.
+  ammo: { missiles: 0, oil: 0, smoke: 0 },
+  ammoMax: 5
+};
+
+// Player's screen Y at speed 0 (cruise position near bottom of play area).
+// At higher speeds the player car moves UP, giving forward visibility and exposing
+// space behind for rear-view threats (oil slick / smoke screen / catch-up enemies).
+const PLAYER_SCREEN_Y_BASE = PLAY_BOTTOM - 70;
+const PLAYER_SCREEN_Y_LIFT = 60;     // total px lift between idle and max speed
+function getPlayerScreenY() {
+  // Smooth lift starting around 30% speed; full lift around 95%+.
+  // Use eased curve so the shift feels natural under your finger.
+  const s = Math.max(0, (player.speed - 0.3) / 0.65);
+  const lift = Math.min(1, s) * PLAYER_SCREEN_Y_LIFT;
+  return PLAYER_SCREEN_Y_BASE - lift;
+}
+
+// ============================================================
+// ENTITIES
+// ============================================================
+const bullets = [];
+const enemies = [];
+const particles = [];
+
+let fireCooldown = 0;
+let enemySpawnTimer = 3;
+let civilianSpawnTimer = 4;
+let trackPos = 0;
+
+// Minimum Z spacing between any newly spawned car and existing cars
+const MIN_CAR_GAP = 90;
+
+// === Weapons system entities ===
+const oilSlicks = [];     // {x, z, life, lifeMax}
+const weaponsVans = [];   // mid-play weapons trucks (separate from rescue truck)
+let weaponsVanSpawnTimer = 18;   // time to next weapons van
+
+// ============================================================
+// CRASH / RESCUE
+// ============================================================
+let gameMode = 'menu';
+let modeTimer = 0;
+const wrecks = [];
+let truck = null;
+
+let state = 'menu';
+let lastTime = performance.now();
+
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('start-btn');
+const warningEl = document.getElementById('warning');
+const levelBannerEl = document.getElementById('level-banner');
+let warningTimer = 0;
+let levelBannerTimer = 0;
+
+// === LEVEL SYSTEM ===
+// Progress to next level on distance. Each level unlocks new enemy types and bumps
+// spawn rates a bit.
+let currentLevel = 1;
+const LEVEL_DISTANCE = 6000;          // trackPos per level (doubled from 3000)
+let levelStartTrackPos = 0;
+
+function levelConfig(lvl) {
+  return {
+    bulletproofUnlocked: lvl >= 2,
+    bulletproofChance: lvl >= 2 ? Math.min(0.30, 0.10 + (lvl - 2) * 0.06) : 0,
+    enemySpawnMin: Math.max(1.0, 2.2 - (lvl - 1) * 0.15),
+    enemySpawnRange: Math.max(0.8, 1.8 - (lvl - 1) * 0.12)
+  };
+}
+
+startBtn.addEventListener('click', startGame);
+startBtn.addEventListener('touchstart', e => { e.preventDefault(); startGame(); }, { passive: false });
+
+function startGame() {
+  player.x = 0;
+  player.prevX = 0;
+  player.vx = 0;
+  player.speed = 0;
+  player.lives = 3;
+  player.score = 0;
+  player.alive = true;
+  player.invincibleTimer = 0;
+  player.ammo.missiles = 0;
+  player.ammo.oil = 0;
+  player.ammo.smoke = 0;
+  bullets.length = 0;
+  enemies.length = 0;
+  particles.length = 0;
+  wrecks.length = 0;
+  trees.length = 0;
+  nextTreeZ = 200;
+  trackPos = 0;
+  fireCooldown = 0;
+  enemySpawnTimer = 3;
+  civilianSpawnTimer = 4;
+  ROAD.widthEvents = [];
+  ROAD._nextEventZ = 500;
+  truck = null;
+  oilSlicks.length = 0;
+  weaponsVans.length = 0;
+  weaponsVanSpawnTimer = 18;
+  warningTimer = 0;
+  levelBannerTimer = 0;
+  currentLevel = 1;
+  levelStartTrackPos = 0;
+  document.getElementById('level').textContent = '1';
+  levelBannerEl.classList.remove('show');
+  gameMode = 'playing';
+  state = 'playing';
+  overlay.classList.add('hidden');
+}
+
+function endGame() {
+  state = 'gameover';
+  gameMode = 'gameover';
+  document.querySelector('#overlay h1').textContent = 'GAME OVER';
+  document.querySelector('#overlay h2').textContent = `SCORE: ${String(player.score).padStart(6, '0')}`;
+  document.querySelector('#overlay p').innerHTML = 'You served your country well, agent.<br>The Interceptor awaits your return.';
+  startBtn.textContent = 'AGAIN';
+  overlay.classList.remove('hidden');
+}
+
+function zToScreenY(z) { return getPlayerScreenY() - (z - trackPos); }
+function screenYToZ(sy) { return trackPos + (getPlayerScreenY() - sy); }
+
+function showWarning(msg) {
+  warningEl.textContent = '⚠ ' + msg + ' ⚠';
+  warningEl.classList.add('show');
+  warningTimer = 1.5;
+}
+
+function showLevelBanner(msg) {
+  levelBannerEl.textContent = msg;
+  levelBannerEl.classList.add('show');
+  levelBannerTimer = 2.0;
+}
+
+// ============================================================
+// CRASH SEQUENCE
+// ============================================================
+function triggerCrash(crashX) {
+  if (gameMode !== 'playing') return;
+  player.lives -= 1;
+  explode(crashX, trackPos, '#ff3333', 20);
+  wrecks.push({
+    x: crashX, z: trackPos,
+    rotation: 0,
+    rotSpeed: (Math.random() - 0.5) * 6,
+    flameTimer: 0
+  });
+  if (player.lives <= 0) {
+    gameMode = 'crashing';
+    modeTimer = 1.5;
+    player.alive = false;
+    return;
+  }
+  gameMode = 'crashing';
+  modeTimer = 1.2;
+  player.alive = false;
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    if (Math.abs(enemies[i].z - trackPos) < 120) enemies.splice(i, 1);
+  }
+}
+
+function spawnTruck() {
+  // The truck position is now tracked as an OFFSET relative to trackPos (zOffset)
+  // so it stays put on screen regardless of how the world scrolls.
+  // truck.zOffset is the truck CENTER's distance ahead of the player.
+  // Player screen Y = PLAYER_SCREEN_Y.
+  // Truck center screen Y = PLAYER_SCREEN_Y - zOffset.
+  // Trailer rear screen Y = (truck center screen Y) + 45 = PLAYER_SCREEN_Y - zOffset + 45.
+  // For trailer rear to align with PLAYER_SCREEN_Y: zOffset = 45.
+  truck = {
+    x: 0,
+    zOffset: PLAY_HEIGHT + 60,   // start above the screen
+    state: 'entering',
+    stateTime: 0,
+    speed: -160,                 // closing speed (zOffset decreases over time)
+    restZOffset: 45
+  };
+  gameMode = 'awaiting_truck';
+  modeTimer = 0;
+}
+
+function updateTruck(dt) {
+  if (!truck) return;
+  truck.stateTime += dt;
+
+  if (truck.state === 'entering') {
+    truck.zOffset += truck.speed * dt;
+    // Decelerate as approaching rest
+    const distToRest = truck.zOffset - truck.restZOffset;
+    if (distToRest < 80 && distToRest > 0) {
+      const decel = 200;
+      truck.speed = Math.min(-40, truck.speed + decel * dt);
+    }
+    if (truck.zOffset <= truck.restZOffset) {
+      truck.zOffset = truck.restZOffset;
+      truck.state = 'slowing';
+      truck.stateTime = 0;
+      truck.speed = 0;
+    }
+  } else if (truck.state === 'slowing') {
+    // Hold position while ramp opens
+    if (truck.stateTime > 0.7) {
+      truck.state = 'dropping';
+      truck.stateTime = 0;
+      // Spawn player at truck X
+      player.x = truck.x;
+      player.alive = true;
+      player.invincibleTimer = 2.5;
+      gameMode = 'playing';
+    }
+  } else if (truck.state === 'dropping') {
+    // Brief beat before truck pulls away
+    if (truck.stateTime > 0.45) {
+      truck.state = 'leaving';
+      truck.stateTime = 0;
+      truck.speed = 80;   // start pulling forward (zOffset increases)
+    }
+  } else if (truck.state === 'leaving') {
+    truck.zOffset += truck.speed * dt;
+    truck.speed += 280 * dt;
+    if (truck.zOffset > PLAY_HEIGHT + 80) {
+      truck = null;
+    }
+  }
+}
+
+// ============================================================
+// UPDATE
+// ============================================================
+function update(dt) {
+  if (state !== 'playing') return;
+
+  let targetX = player.x;
+  let targetSpeed = player.speed;
+  if (gameMode === 'playing' && input.dragging) {
+    targetX = ((input.dragX / VW) - 0.5) * 2 * (VW * 0.45);
+    const vy = 1 - ((input.dragY - BAND_TOP) / BAND_HEIGHT);
+    if (vy > 0.55) targetSpeed = 0.5 + ((vy - 0.55) / 0.45) * 0.5;
+    else if (vy < 0.25) targetSpeed = (vy / 0.25) * 0.35;
+    else targetSpeed = player.cruiseSpeed + (vy - 0.4) * 0.4;
+  } else if (gameMode === 'playing') {
+    targetSpeed = player.cruiseSpeed;
+  } else {
+    targetSpeed = 0.5;
+  }
+
+  if (gameMode === 'playing') {
+    player.prevX = player.x;
+    player.x += (targetX - player.x) * Math.min(1, dt * 6);
+    // Lateral velocity (px/sec) — used for bump force calculation
+    if (dt > 0) player.vx = (player.x - player.prevX) / dt;
+  } else {
+    player.vx = 0;
+  }
+  player.speed += (targetSpeed - player.speed) * Math.min(1, dt * 2.5);
+  player.speed = Math.max(0.05, Math.min(1, player.speed));
+
+  const speedWorld = player.speed * player.maxSpeed;
+  trackPos += speedWorld * dt;
+  if (gameMode === 'playing') player.score += Math.floor(speedWorld * dt * 0.3);
+
+  maybeAddRoadEvents();
+  maybeAddTrees();
+
+  // --- Level progression ---
+  if (gameMode === 'playing' && trackPos - levelStartTrackPos > LEVEL_DISTANCE) {
+    currentLevel += 1;
+    levelStartTrackPos = trackPos;
+    showLevelBanner('LEVEL ' + currentLevel);
+    document.getElementById('level').textContent = String(currentLevel);
+  }
+
+  if (levelBannerTimer > 0) {
+    levelBannerTimer -= dt;
+    if (levelBannerTimer <= 0) levelBannerEl.classList.remove('show');
+  }
+
+  // Firing
+  fireCooldown -= dt;
+  if (gameMode === 'playing' && input.gunsHeld && fireCooldown <= 0) {
+    bullets.push({ x: player.x, z: trackPos + 30, vz: 700 });
+    fireCooldown = 0.11;
+  }
+
+  // Bullets
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i];
+    b.z += b.vz * dt;
+    if (b.z - trackPos > PLAY_HEIGHT + 50) bullets.splice(i, 1);
+  }
+
+  // Spawning — level-aware
+  if (gameMode === 'playing') {
+    const cfg = levelConfig(currentLevel);
+    enemySpawnTimer -= dt;
+    if (enemySpawnTimer <= 0) {
+      if (canSpawnAtFront()) {
+        // Pick enemy type based on level
+        if (cfg.bulletproofUnlocked && Math.random() < cfg.bulletproofChance) {
+          spawnBulletproof();
+        } else {
+          spawnSwitchblade();
+        }
+        enemySpawnTimer = cfg.enemySpawnMin + Math.random() * cfg.enemySpawnRange - player.speed * 0.4;
+      } else {
+        enemySpawnTimer = 0.4;
+      }
+    }
+    civilianSpawnTimer -= dt;
+    if (civilianSpawnTimer <= 0) {
+      if (canSpawnAtFront()) {
+        spawnCivilian();
+        civilianSpawnTimer = 3.0 + Math.random() * 3.0;
+      } else {
+        civilianSpawnTimer = 0.4;
+      }
+    }
+  }
+
+  // Cars
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+
+    if (e.state === 'alive') {
+      const speedWorldRef = player.speed * player.maxSpeed;
+
+      // --- Variable Z (vertical) behavior for Switchblades ---
+      // POSITIVE vz means driving forward (same direction as player).
+      if (e.faction === 'enemy' && !e.bumped) {
+        // === Rear-attack transition ===
+        // Once passed by the player (now behind), some enemies switch to 'chaser' state
+        // and accelerate to catch up. This justifies oil slicks / smoke screen later.
+        if (e.aiState !== 'chaser' && (trackPos - e.z) > 30 && !e._chaserChecked) {
+          e._chaserChecked = true;
+          const chaseChance = e.bulletproof ? 0.5 : 0.3;
+          if (Math.random() < chaseChance) {
+            e.aiState = 'chaser';
+            e.aiTimer = 9999;       // stays in chaser mode
+            e.targetSpeedRatio = e.bulletproof ? 1.06 : 1.08;
+          }
+        }
+
+        if (e.aiState === 'chaser') {
+          // Maintain chaser speed (a touch faster than player), no further state cycling
+          // Behavior: glide to player's X, then bump/slash from behind.
+        } else {
+          e.aiTimer -= dt;
+          if (e.aiTimer <= 0) {
+            if (e.bulletproof) {
+              const r = Math.random();
+              e.aiState = r < 0.6 ? 'stalker' : 'blocker';
+              if (e.aiState === 'blocker') e.targetSpeedRatio = 0.62 + Math.random() * 0.08;
+              else e.targetSpeedRatio = 0.70 + Math.random() * 0.10;
+              e.aiTimer = 0.8 + Math.random() * 1.0;
+            } else {
+              const r = Math.random();
+              if (r < 0.4) e.aiState = 'stalker';
+              else if (r < 0.8) e.aiState = 'slasher';
+              else e.aiState = 'blocker';
+              if (e.aiState === 'blocker') e.targetSpeedRatio = 0.60 + Math.random() * 0.12;
+              else if (e.aiState === 'slasher') e.targetSpeedRatio = 0.88 + Math.random() * 0.10;
+              else e.targetSpeedRatio = 0.72 + Math.random() * 0.14;
+              e.aiTimer = 0.6 + Math.random() * 0.9;
+            }
+          }
+        }
+        const targetVz = speedWorldRef * e.targetSpeedRatio;
+        e.vz += (targetVz - e.vz) * Math.min(1, dt * 3.0);
+      }
+
+      e.z += e.vz * dt;
+      e.x += e.vx * dt;
+      const hw = roadHalfWidthAt(e.z);
+
+      // Bumped Switchblades can be pushed off the road
+      if (!e.bumped) {
+        if (e.x < -hw + 12) { e.x = -hw + 12; e.vx = Math.abs(e.vx); }
+        if (e.x >  hw - 12) { e.x =  hw - 12; e.vx = -Math.abs(e.vx); }
+      }
+
+      // --- Lateral behavior by faction & AI state ---
+      if (e.faction === 'enemy' && !e.bumped && gameMode === 'playing') {
+        if (e.aiState === 'stalker') {
+          // Gentle drift toward player's X column
+          e.vx += Math.sign(player.x - e.x) * 12 * dt;
+        } else if (e.aiState === 'slasher') {
+          // If close in Z, lunge aggressively toward player X
+          const dz = Math.abs(e.z - trackPos);
+          if (dz < 60) {
+            e.vx += Math.sign(player.x - e.x) * 80 * dt;
+          } else {
+            e.vx += Math.sign(player.x - e.x) * 15 * dt;
+          }
+        } else if (e.aiState === 'blocker') {
+          // Position directly above player & slow down — be a road block
+          e.vx += Math.sign(player.x - e.x) * 25 * dt;
+        } else if (e.aiState === 'chaser') {
+          // Coming up from behind. Steer hard toward player X.
+          const dz = Math.abs(e.z - trackPos);
+          if (dz < 50) {
+            e.vx += Math.sign(player.x - e.x) * 90 * dt;
+          } else {
+            e.vx += Math.sign(player.x - e.x) * 30 * dt;
+          }
+        }
+      } else if (e.faction === 'civilian') {
+        e.vx += (e.laneX - e.x) * 0.5 * dt;
+      }
+
+      // vx cap — bumped enemies allow stronger sideways speed
+      const vxCap = e.bumped ? 200
+        : (e.aiState === 'slasher' || e.aiState === 'chaser' ? 90 : 50);
+      e.vx = Math.max(-vxCap, Math.min(vxCap, e.vx));
+
+      // --- Bumped Switchblade / Bulletproof tree-kill check ---
+      if (e.faction === 'enemy' && e.bumped) {
+        let killedByTree = false;
+        for (const tr of trees) {
+          const treeScreenX = tr.x - ROAD.centerX;
+          if (Math.abs(e.x - treeScreenX) < 12 * tr.size && Math.abs(e.z - tr.z) < 14) {
+            explode(e.x, e.z, '#ff8800', 22);
+            player.score += e.bulletproof ? 500 : 300;
+            enemies.splice(i, 1);
+            killedByTree = true;
+            break;
+          }
+        }
+        if (killedByTree) continue;
+
+        const offRoad = Math.abs(e.x) > hw + 4;
+
+        if (e.bulletproof) {
+          // Bulletproof cars die when bumped off the road for ~0.5 sec OR hit a tree
+          if (offRoad) {
+            e.offRoadTimer = (e.offRoadTimer || 0) + dt;
+            e.vx *= Math.pow(0.92, dt * 60);
+            // Visual tumbling spin while off-road
+            e.spin = (e.spin || 0) + 8 * dt;
+            // Smoke trail while tumbling
+            if (Math.random() < 0.5) {
+              particles.push({
+                x: e.x, z: e.z + 10,
+                vx: (Math.random() - 0.5) * 30,
+                vz: 30 + Math.random() * 25,
+                life: 0.6,
+                color: 'rgba(80,80,80,0.7)'
+              });
+            }
+            if (e.offRoadTimer > 0.5) {
+              explode(e.x, e.z, '#ff8800', 22);
+              player.score += 500;
+              enemies.splice(i, 1);
+              continue;
+            }
+          } else {
+            // Bulletproof car NEVER fully recovers from a bump — it stays bumped
+            // and the player keeps pressing the advantage. Just slow its sideways drift slightly.
+            e.vx *= Math.pow(0.97, dt * 60);
+            e.offRoadTimer = 0;
+          }
+        } else {
+          // Normal Switchblade — can recover if back on road
+          if (!offRoad) {
+            e.bumped = false;
+          } else {
+            e.vx *= Math.pow(0.95, dt * 60);
+          }
+        }
+      }
+
+      // Damage smoke for hit Switchblades
+      if (e.faction === 'enemy' && e.hp < e.maxHp) {
+        const smokeChance = (e.maxHp - e.hp) * 0.15;     // 1 hit ≈ 0.15, 2 hits ≈ 0.30
+        if (Math.random() < smokeChance) {
+          particles.push({
+            x: e.x, z: e.z + 10,
+            vx: (Math.random() - 0.5) * 20,
+            vz: 20 + Math.random() * 20,
+            life: 0.5 + Math.random() * 0.3,
+            color: e.hp === 1 ? 'rgba(60,60,60,0.7)' : 'rgba(120,120,120,0.6)'
+          });
+        }
+      }
+
+      // Warning decay for civilians
+      if (e.faction === 'civilian' && e.warningHits > 0) {
+        e.warningTimer -= dt;
+        if (e.warningTimer <= 0) {
+          e.warningHits = 0;
+        }
+      }
+    } else if (e.state === 'spinning') {
+      e.z += e.vz * dt;
+      e.x += e.vx * dt;
+      e.spin += e.spinSpeed * dt;
+      e.stateTime += dt;
+
+      if (e.faction === 'enemy') {
+        // Natural drift — no homing. They keep their initial spin trajectory
+        // with mild deceleration. If they happen to clip a tree, big bonus.
+        e.vx *= Math.pow(0.95, dt * 60);
+        e.vz *= Math.pow(0.97, dt * 60);
+
+        const hw = roadHalfWidthAt(e.z);
+
+        // Opportunistic tree collision check — they collide with ANY tree they happen across
+        let killedByTree = false;
+        for (const tr of trees) {
+          const treeScreenX = tr.x - ROAD.centerX;
+          if (Math.abs(e.x - treeScreenX) < 12 * tr.size && Math.abs(e.z - tr.z) < 14) {
+            explode(e.x, e.z, '#ff8800', 22);
+            player.score += 300;
+            enemies.splice(i, 1);
+            killedByTree = true;
+            break;
+          }
+        }
+        if (killedByTree) continue;
+
+        // Timeouts — off-road exit
+        if (e.stateTime > 1.4 && Math.abs(e.x) > hw + 20) {
+          explode(e.x, e.z, '#ff8800', 16);
+          player.score += 200;
+          enemies.splice(i, 1);
+          continue;
+        }
+        if (e.stateTime > 2.5) {
+          explode(e.x, e.z, '#ff8800', 14);
+          player.score += 100;
+          enemies.splice(i, 1);
+          continue;
+        }
+      } else if (e.faction === 'civilian') {
+        e.vx *= Math.pow(0.85, dt * 60);
+        e.vz *= Math.pow(0.98, dt * 60);
+        if (e.stateTime > 4.0) {
+          enemies.splice(i, 1);
+          continue;
+        }
+      }
+    }
+
+    if (e.z < trackPos - 200) { enemies.splice(i, 1); continue; }
+
+    // Bullet hits
+    if (e.state === 'alive') {
+      for (let j = bullets.length - 1; j >= 0; j--) {
+        const b = bullets[j];
+        if (Math.abs(b.z - e.z) < 20 && Math.abs(b.x - e.x) < 14) {
+          bullets.splice(j, 1);
+
+          if (e.bulletproof) {
+            // Bullets ricochet harmlessly off — small spark
+            explode(b.x, b.z, '#aaccee', 5);
+            // Push the spark sideways like a deflection
+            for (let k = 0; k < 3; k++) {
+              particles.push({
+                x: b.x + (Math.random() - 0.5) * 4,
+                z: b.z,
+                vx: (Math.random() - 0.5) * 200,
+                vz: (Math.random() - 0.5) * 60,
+                life: 0.25,
+                color: '#ffffff'
+              });
+            }
+          } else if (e.faction === 'enemy') {
+            // Switchblade — takes 3 hits, with damage feedback per shot
+            e.hp -= 1;
+            if (e.hp > 0) {
+              // Non-killing shot — sparks + smoke + small score
+              const sparkColor = e.hp === 2 ? '#ffffff' : '#ff9933';
+              explode(b.x, b.z, sparkColor, 8);
+              player.score += 15;
+              // Brief lateral knock from the bullet impact
+              e.vx += (Math.random() - 0.5) * 18;
+            } else {
+              // Final shot — spin out
+              explode(b.x, b.z, '#ffcc66', 10);
+              e.state = 'spinning';
+              e.stateTime = 0;
+              e.spin = 0;
+              e.spinSpeed = (Math.random() < 0.5 ? -1 : 1) * (10 + Math.random() * 6);
+              const driftSide = Math.random() < 0.5 ? -1 : 1;
+              const angleDeg = 15 + Math.random() * 15;
+              const angleRad = angleDeg * Math.PI / 180;
+              // Spun-out cars lose most forward speed — they drift backward relative to us
+              const playerWorldSpeed = player.speed * player.maxSpeed;
+              const remainingForward = playerWorldSpeed * (0.35 + Math.random() * 0.15);
+              e.vx = driftSide * Math.sin(angleRad) * 90;
+              e.vz = remainingForward * Math.cos(angleRad);    // still forward, just slower
+              e.targetTree = null;
+              player.score += 50;
+            }
+          } else if (e.faction === 'civilian') {
+            // CIVILIAN — takes 3 hits within a window
+            if (e.warningHits === 0) {
+              // First hit: white spark, no penalty, slight wobble
+              e.warningHits = 1;
+              e.warningTimer = 2.5;
+              explode(b.x, b.z, '#ffffff', 8);
+              e.vx += (Math.random() - 0.5) * 20;
+            } else if (e.warningHits === 1) {
+              // Second hit: orange spark — escalating warning, no penalty yet
+              e.warningHits = 2;
+              e.warningTimer = 2.5;
+              explode(b.x, b.z, '#ff9933', 10);
+              e.vx += (Math.random() - 0.5) * 30;
+            } else {
+              // Third hit: full penalty
+              explode(b.x, b.z, '#ffcc66', 12);
+              e.state = 'spinning';
+              e.stateTime = 0;
+              e.spin = 0;
+              e.spinSpeed = (Math.random() < 0.5 ? -1 : 1) * 14;
+              e.vx = (Math.random() - 0.5) * 20;
+              // Slowed but still rolling forward
+              const playerWorldSpeed = player.speed * player.maxSpeed;
+              e.vz = playerWorldSpeed * (0.35 + Math.random() * 0.10);
+              e.targetTree = null;
+              player.score = Math.max(0, player.score - 500);
+              showWarning('CIVILIAN HIT');
+            }
+          }
+          break;
+        }
+      }
+    }
+
+    // Player collision — distinguish crash (head-on) from bump (side-swipe)
+    if (gameMode === 'playing' && player.alive && player.invincibleTimer <= 0 && e.state === 'alive' &&
+        Math.abs(e.z - trackPos) < 25) {
+      const dx = e.x - player.x;
+      const absDx = Math.abs(dx);
+
+      if (absDx < 19) {
+        // CRASH — significant X overlap, we slammed into them
+        triggerCrash(player.x);
+        enemies.splice(i, 1);
+        continue;
+      } else if (absDx < 28) {
+        // SIDE-SWIPE BAND — bump territory. Check who's pushing into whom.
+        const playerClosingVx = Math.sign(dx) * player.vx;   // positive if PLAYER moves toward enemy
+        const enemyClosingVx = -Math.sign(dx) * e.vx;        // positive if ENEMY moves toward player
+
+        // Switchblade slasher attack: enemy aggressively side-swipes player with blades = crash
+        // (Bulletproof cars don't have blades, so this only applies to non-bulletproof enemies.)
+        if (e.faction === 'enemy' && !e.bulletproof && enemyClosingVx > 30) {
+          // Their wheel blades caught us
+          triggerCrash(player.x);
+          enemies.splice(i, 1);
+          continue;
+        }
+
+        if (playerClosingVx > 5) {
+          const bumpDir = Math.sign(dx);
+          const bumpForce = Math.min(playerClosingVx, 200);
+
+          if (e.faction === 'enemy') {
+            if (e.bulletproof) {
+              // Bulletproof cars CAN'T be spun out by bumps — only kill is off-road.
+              // Hard bumps just shove them harder sideways, which helps reach the grass.
+              const force = playerClosingVx > 60 ? bumpForce * 2.2 : bumpForce * 1.2;
+              e.vx += bumpDir * force;
+              e.bumped = true;
+              player.x -= bumpDir * 5;          // bigger recoil — armored car is heavy
+              const contactX = (player.x + e.x) / 2;
+              explode(contactX, e.z, '#ddeeff', 8);
+              // Extra impact sparks for hard bumps
+              if (playerClosingVx > 60) {
+                for (let k = 0; k < 6; k++) {
+                  particles.push({
+                    x: contactX, z: e.z,
+                    vx: (Math.random() - 0.5) * 150,
+                    vz: (Math.random() - 0.5) * 80,
+                    life: 0.3,
+                    color: '#ffffff'
+                  });
+                }
+              }
+            } else {
+              // Switchblade — push them sideways
+              e.vx += bumpDir * bumpForce * 1.2;
+              e.bumped = true;
+              player.x -= bumpDir * 4;
+              const contactX = (player.x + e.x) / 2;
+              explode(contactX, e.z, '#ffffff', 6);
+              // Hard bump → instant spin-out (Switchblades only)
+              if (playerClosingVx > 60) {
+                e.state = 'spinning';
+                e.stateTime = 0;
+                e.spin = 0;
+                e.spinSpeed = bumpDir * (10 + Math.random() * 6);
+                const angleDeg = 20 + Math.random() * 15;
+                const angleRad = angleDeg * Math.PI / 180;
+                const playerWorldSpeed = player.speed * player.maxSpeed;
+                const remainingForward = playerWorldSpeed * (0.30 + Math.random() * 0.15);
+                e.vx = bumpDir * Math.sin(angleRad) * 100;
+                e.vz = remainingForward * Math.cos(angleRad);
+                player.score += 75;
+              }
+            }
+          } else if (e.faction === 'civilian') {
+            e.vx += bumpDir * bumpForce * 0.5;
+            player.x -= bumpDir * 3;
+            const contactX = (player.x + e.x) / 2;
+            explode(contactX, e.z, '#dddddd', 4);
+            e.laneX = e.x;
+          }
+        }
+      }
+    }
+  }
+
+  if (player.invincibleTimer > 0) player.invincibleTimer -= dt;
+  if (warningTimer > 0) {
+    warningTimer -= dt;
+    if (warningTimer <= 0) warningEl.classList.remove('show');
+  }
+
+  // Trees
+  if (gameMode === 'playing' && player.alive && player.invincibleTimer <= 0) {
+    const playerScreenX = ROAD.centerX + player.x;
+    for (const t of trees) {
+      if (Math.abs(t.z - trackPos) < 20) {
+        const dx = Math.abs(t.x - playerScreenX);
+        if (dx < 12 * t.size) {
+          triggerCrash(player.x);
+          break;
+        }
+      }
+    }
+  }
+
+  // Wrecks
+  for (let i = wrecks.length - 1; i >= 0; i--) {
+    const w = wrecks[i];
+    w.rotation += w.rotSpeed * dt;
+    w.rotSpeed *= Math.pow(0.85, dt * 60);
+    w.flameTimer += dt;
+    if (w.z < trackPos - 160) wrecks.splice(i, 1);
+  }
+
+  // Crash / rescue state
+  if (gameMode === 'crashing') {
+    modeTimer -= dt;
+    if (modeTimer <= 0) {
+      if (player.lives <= 0) endGame();
+      else spawnTruck();
+    }
+  }
+  updateTruck(dt);
+  updateWeaponsVans(dt);
+  updateOilSlicks(dt);
+
+  // === Weapons van spawn timer ===
+  if (gameMode === 'playing' && currentLevel >= 2 && weaponsVans.length === 0) {
+    weaponsVanSpawnTimer -= dt;
+    if (weaponsVanSpawnTimer <= 0) {
+      // Skip if player is at max ammo for oil already AND no other weapons unlocked
+      // (for v1.1 always oil — but if maxed, still send the truck so player can see and skip)
+      spawnWeaponsVan('oil');
+      weaponsVanSpawnTimer = 30 + Math.random() * 15;
+    }
+  }
+
+  // Particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt;
+    p.z += p.vz * dt;
+    p.life -= dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  // Off-road
+  const hw = roadHalfWidthAt(trackPos);
+  if (gameMode === 'playing' && Math.abs(player.x) > hw - 8) {
+    player.speed *= Math.pow(0.25, dt);
+  }
+
+  // HUD
+  document.getElementById('score').textContent = String(player.score).padStart(6, '0');
+  document.getElementById('speed').textContent = Math.floor(player.speed * 220);
+  document.getElementById('lives').textContent = '▲'.repeat(Math.max(0, player.lives));
+  refreshWeaponButtons();
+}
+
+function refreshWeaponButtons() {
+  // Oil
+  const oilBtn = document.getElementById('btn-oil');
+  if (player.ammo.oil > 0) {
+    oilBtn.classList.remove('disabled');
+    oilBtn.textContent = 'OIL ' + player.ammo.oil;
+  } else {
+    oilBtn.classList.add('disabled');
+    oilBtn.textContent = 'OIL';
+  }
+  // Missiles
+  const mslBtn = document.getElementById('btn-missiles');
+  if (player.ammo.missiles > 0) {
+    mslBtn.classList.remove('disabled');
+    mslBtn.textContent = 'MSL ' + player.ammo.missiles;
+  } else {
+    mslBtn.classList.add('disabled');
+    mslBtn.textContent = 'MSL';
+  }
+  // Smoke
+  const smkBtn = document.getElementById('btn-smoke');
+  if (player.ammo.smoke > 0) {
+    smkBtn.classList.remove('disabled');
+    smkBtn.textContent = 'SMK ' + player.ammo.smoke;
+  } else {
+    smkBtn.classList.add('disabled');
+    smkBtn.textContent = 'SMK';
+  }
+}
+
+function updateOilSlicks(dt) {
+  for (let i = oilSlicks.length - 1; i >= 0; i--) {
+    const s = oilSlicks[i];
+    s.life -= dt;
+    if (s.life <= 0 || s.z < trackPos - 250) {
+      oilSlicks.splice(i, 1);
+      continue;
+    }
+    // Check enemy collisions: any alive enemy that drives through slick spins out
+    for (const e of enemies) {
+      if (!e || e.state !== 'alive') continue;
+      if (e.faction === 'civilian') continue;
+      // Each slick can affect a given enemy at most once
+      if (!s._hitEnemies) s._hitEnemies = new Set();
+      if (s._hitEnemies.has(e)) continue;
+      if (Math.abs(e.z - s.z) < 14 && Math.abs(e.x - s.x) < 16) {
+        s._hitEnemies.add(e);
+        e.state = 'spinning';
+        e.stateTime = 0;
+        e.spin = 0;
+        e.spinSpeed = (Math.random() < 0.5 ? -1 : 1) * (12 + Math.random() * 8);
+        const driftSide = Math.random() < 0.5 ? -1 : 1;
+        const angleDeg = 25 + Math.random() * 25;
+        const angleRad = angleDeg * Math.PI / 180;
+        const playerWorldSpeed = player.speed * player.maxSpeed;
+        const remainingForward = playerWorldSpeed * (0.30 + Math.random() * 0.15);
+        e.vx = driftSide * Math.sin(angleRad) * 110;
+        e.vz = remainingForward * Math.cos(angleRad);
+        player.score += e.bulletproof ? 250 : 75;
+      }
+    }
+  }
+}
+
+function updateWeaponsVans(dt) {
+  for (let i = weaponsVans.length - 1; i >= 0; i--) {
+    const v = weaponsVans[i];
+    v.stateTimer += dt;
+    v.z += v.vz * dt;
+
+    // Despawn if way behind player
+    if (v.z < trackPos - 200) {
+      weaponsVans.splice(i, 1);
+      continue;
+    }
+
+    const dz = v.z - trackPos;   // positive if van is ahead of player
+
+    if (v.state === 'cruising') {
+      // Once player has caught up close (within ~80 Z behind van's center),
+      // van slows further and lowers ramp.
+      if (dz < 80) {
+        v.state = 'waiting';
+        v.stateTimer = 0;
+        v.vz = (player.speed * player.maxSpeed) * 0.78;   // slow further
+      }
+    } else if (v.state === 'waiting') {
+      // Ramp is down. Player can drive INTO the trailer (close enough in X and Z).
+      const playerHasFullAmmo = player.ammo[v.weaponType] >= player.ammoMax;
+      // Check if player drives into the trailer back (only while playing)
+      const trailerRearZ = v.z - 35;
+      const trailerOpenW = 18;
+      if (gameMode === 'playing' && player.alive && !v.delivered && !playerHasFullAmmo &&
+          Math.abs(player.x - v.x) < trailerOpenW &&
+          Math.abs(trackPos - trailerRearZ) < 20) {
+        deliverWeapon(v);
+      }
+      // Timeout after ~4 seconds → close ramp and leave
+      if (v.stateTimer > 4.0) {
+        v.state = 'closing';
+        v.stateTimer = 0;
+      }
+    } else if (v.state === 'closing') {
+      // Ramp coming up
+      if (v.stateTimer > 0.4) {
+        v.state = 'leaving';
+        v.stateTimer = 0;
+      }
+    } else if (v.state === 'leaving') {
+      // Accelerate away
+      v.vz += 200 * dt;
+      if (v.z - trackPos > PLAY_HEIGHT + 80) {
+        weaponsVans.splice(i, 1);
+      }
+    } else if (v.state === 'delivered_exit') {
+      // Like leaving but after a delivery — wider acceleration
+      v.vz += 280 * dt;
+      if (v.z - trackPos > PLAY_HEIGHT + 80) {
+        weaponsVans.splice(i, 1);
+      }
+    }
+  }
+}
+
+function deliverWeapon(v) {
+  v.delivered = true;
+  v.state = 'delivered_exit';
+  v.stateTimer = 0;
+  // Top up the relevant ammo by 3, capped at max
+  const type = v.weaponType;
+  player.ammo[type] = Math.min(player.ammoMax, player.ammo[type] + 3);
+  // Brief invincibility so player doesn't get rammed mid-pickup
+  player.invincibleTimer = Math.max(player.invincibleTimer, 1.0);
+  // Score + visual sparkle
+  player.score += 250;
+  for (let k = 0; k < 16; k++) {
+    particles.push({
+      x: player.x + (Math.random() - 0.5) * 16,
+      z: trackPos,
+      vx: (Math.random() - 0.5) * 200,
+      vz: (Math.random() - 0.5) * 100,
+      life: 0.5,
+      color: '#ffee44'
+    });
+  }
+  showWarning(type.toUpperCase() + ' +3');
+}
+
+// Check that no existing alive car is too close to the spawn point at the front
+function canSpawnAtFront() {
+  const spawnZ = trackPos + PLAY_HEIGHT + 30;
+  for (const e of enemies) {
+    if (e.state !== 'alive') continue;
+    if (Math.abs(e.z - spawnZ) < MIN_CAR_GAP) return false;
+  }
+  return true;
+}
+
+function spawnBulletproof() {
+  const spawnZ = trackPos + PLAY_HEIGHT + 30;
+  const hw = roadHalfWidthAt(spawnZ);
+  const x = (Math.random() - 0.5) * (hw - 16) * 1.4;
+  const playerWorldSpeed = player.speed * player.maxSpeed;
+  enemies.push({
+    type: 'bulletproof',
+    faction: 'enemy',
+    x: Math.max(-hw + 14, Math.min(hw - 14, x)),
+    z: spawnZ,
+    vx: (Math.random() - 0.5) * 15,
+    vz: playerWorldSpeed * (0.72 + Math.random() * 0.08),  // slower than Switchblade
+    hp: 999,                                                // effectively bulletproof
+    maxHp: 999,
+    state: 'alive',
+    stateTime: 0,
+    spin: 0,
+    spinSpeed: 0,
+    laneX: 0,
+    targetTree: null,
+    warningHits: 0,
+    warningTimer: 0,
+    bumped: false,
+    bulletproof: true,
+    offRoadTimer: 0,                                        // counts up while off-road
+    aiState: 'stalker',
+    aiTimer: 0.3 + Math.random() * 0.5,
+    targetSpeedRatio: 0.75 + Math.random() * 0.06
+  });
+}
+
+function spawnSwitchblade() {
+  const spawnZ = trackPos + PLAY_HEIGHT + 30;
+  const hw = roadHalfWidthAt(spawnZ);
+  const x = (Math.random() - 0.5) * (hw - 16) * 1.6;
+  // CRITICAL: Switchblades have POSITIVE vz — they're DRIVING FORWARD through the world.
+  // Spawned somewhat slower than player so they're cars the player is overtaking.
+  const playerWorldSpeed = player.speed * player.maxSpeed;
+  enemies.push({
+    type: 'switchblade',
+    faction: 'enemy',
+    x: Math.max(-hw + 14, Math.min(hw - 14, x)),
+    z: spawnZ,
+    vx: (Math.random() - 0.5) * 25,
+    vz: playerWorldSpeed * (0.75 + Math.random() * 0.08),    // 75-83% of player speed at spawn
+    hp: 3,
+    maxHp: 3,
+    state: 'alive',
+    stateTime: 0,
+    spin: 0,
+    spinSpeed: 0,
+    laneX: 0,
+    targetTree: null,
+    warningHits: 0,
+    warningTimer: 0,
+    bumped: false,
+    aiState: 'stalker',
+    aiTimer: 0.3 + Math.random() * 0.5,
+    targetSpeedRatio: 0.78 + Math.random() * 0.08
+  });
+}
+
+function spawnCivilian() {
+  const spawnZ = trackPos + PLAY_HEIGHT + 30;
+  const hw = roadHalfWidthAt(spawnZ);
+  const laneX = (Math.random() - 0.5) * (hw - 20) * 1.4;
+  const isTaxi = Math.random() < 0.35;
+  const playerWorldSpeed = player.speed * player.maxSpeed;
+  // Civilians drive FORWARD (positive vz) at some fraction of typical traffic speed.
+  // Slower than the player → player gradually overtakes them.
+  // Taxis are a bit faster than sedans.
+  const speedFrac = isTaxi
+    ? 0.70 + Math.random() * 0.10        // taxi: 70-80% of player speed
+    : 0.50 + Math.random() * 0.15;       // sedan: 50-65% of player speed
+  enemies.push({
+    type: isTaxi ? 'taxi' : 'sedan',
+    faction: 'civilian',
+    x: laneX,
+    z: spawnZ,
+    vx: 0,
+    vz: playerWorldSpeed * speedFrac,
+    hp: 1,
+    state: 'alive',
+    stateTime: 0,
+    spin: 0,
+    spinSpeed: 0,
+    laneX: laneX,
+    targetTree: null,
+    warningHits: 0,
+    warningTimer: 0,
+    bumped: false
+  });
+}
+
+function explode(x, z, color, count) {
+  count = count || 14;
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x: x, z: z,
+      vx: (Math.random() - 0.5) * 150,
+      vz: (Math.random() - 0.5) * 150,
+      life: 0.4 + Math.random() * 0.4,
+      color: color
+    });
+  }
+}
+
+// === Oil Slick mechanic ===
+// Drops a slick BEHIND the player at the current X. The slick is a world entity
+// that scrolls naturally; any enemy that drives through it spins out.
+function dropOilSlick() {
+  if (gameMode !== 'playing' || !player.alive) return;
+  if (player.ammo.oil <= 0) return;
+  player.ammo.oil -= 1;
+  oilSlicks.push({
+    x: player.x,
+    z: trackPos - 18,         // just behind the player
+    life: 6.0,
+    lifeMax: 6.0
+  });
+  // Tiny splash sparks
+  for (let k = 0; k < 6; k++) {
+    particles.push({
+      x: player.x + (Math.random() - 0.5) * 6,
+      z: trackPos - 18,
+      vx: (Math.random() - 0.5) * 60,
+      vz: (Math.random() - 0.5) * 40,
+      life: 0.4,
+      color: 'rgba(40,30,20,0.8)'
+    });
+  }
+}
+
+// === Weapons Van spawning ===
+function spawnWeaponsVan(weaponType) {
+  // Choose weapon if not specified — for v1.1 we only deliver oil
+  weaponType = weaponType || 'oil';
+  const spawnZ = trackPos + PLAY_HEIGHT + 60;
+  const playerWorldSpeed = player.speed * player.maxSpeed;
+  weaponsVans.push({
+    x: 0,                       // road-center
+    z: spawnZ,
+    vz: playerWorldSpeed * 0.85, // slightly slower than player so you catch up
+    weaponType: weaponType,
+    state: 'cruising',          // cruising -> waiting -> closing -> leaving
+    stateTimer: 0,
+    delivered: false
+  });
+}
+
+// ============================================================
+// RENDER
+// ============================================================
+function render() {
+  ctx.fillStyle = '#000';
+  ctx.fillRect(offsetX, offsetY, VW * scale, VH * scale);
+
+  ctx.save();
+  ctx.translate(offsetX, offsetY);
+  ctx.scale(scale, scale);
+
+  drawTerrain();
+  drawRoad();
+
+  const drawables = [];
+  for (const t of trees) drawables.push({ kind: 'tree', ref: t, z: t.z });
+  for (const e of enemies) drawables.push({ kind: 'enemy', ref: e, z: e.z });
+  for (const w of wrecks) drawables.push({ kind: 'wreck', ref: w, z: w.z });
+  if (player.alive) drawables.push({ kind: 'player', z: trackPos });
+  if (truck) drawables.push({ kind: 'truck', ref: truck, z: trackPos + truck.zOffset });
+  for (const v of weaponsVans) drawables.push({ kind: 'weaponsvan', ref: v, z: v.z });
+  drawables.sort((a, b) => b.z - a.z);
+
+  // Oil slicks drawn UNDER everything (they're on the road)
+  for (const s of oilSlicks) drawOilSlick(s);
+
+  for (const b of bullets) drawBullet(b);
+
+  for (const d of drawables) {
+    if (d.kind === 'tree') drawTree(d.ref);
+    else if (d.kind === 'enemy') drawEnemy(d.ref);
+    else if (d.kind === 'wreck') drawWreck(d.ref);
+    else if (d.kind === 'player') drawPlayer();
+    else if (d.kind === 'truck') drawTruck(d.ref);
+    else if (d.kind === 'weaponsvan') drawWeaponsVan(d.ref);
+  }
+
+  drawParticles();
+  drawSteeringBand();
+
+  ctx.restore();
+}
+
+function drawTerrain() {
+  ctx.fillStyle = '#2da44a';
+  ctx.fillRect(0, PLAY_TOP, VW, PLAY_HEIGHT);
+  const stripeSpacing = 40;
+  const offset = trackPos % stripeSpacing;
+  ctx.fillStyle = '#249339';
+  for (let y = -stripeSpacing; y < PLAY_HEIGHT + stripeSpacing; y += stripeSpacing) {
+    const drawY = y + offset;
+    if (drawY >= PLAY_TOP - 4 && drawY <= PLAY_BOTTOM) {
+      ctx.fillRect(0, drawY, VW, 6);
+    }
+  }
+}
+
+function drawRoad() {
+  const sampleStep = 4;
+  ctx.fillStyle = '#3a3a3a';
+  ctx.beginPath();
+  let prevY = PLAY_BOTTOM;
+  let prevHW = roadHalfWidthAt(trackPos);
+  ctx.moveTo(ROAD.centerX - prevHW, prevY);
+  for (let y = PLAY_BOTTOM - sampleStep; y >= PLAY_TOP - sampleStep; y -= sampleStep) {
+    const z = screenYToZ(y);
+    const hw = roadHalfWidthAt(z);
+    ctx.lineTo(ROAD.centerX - hw, y);
+    prevY = y;
+    prevHW = hw;
+  }
+  ctx.lineTo(ROAD.centerX + prevHW, prevY);
+  for (let y = PLAY_TOP; y <= PLAY_BOTTOM; y += sampleStep) {
+    const z = screenYToZ(y);
+    const hw = roadHalfWidthAt(z);
+    ctx.lineTo(ROAD.centerX + hw, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  let first = true;
+  for (let y = PLAY_BOTTOM; y >= PLAY_TOP; y -= sampleStep) {
+    const z = screenYToZ(y);
+    const hw = roadHalfWidthAt(z);
+    if (first) { ctx.moveTo(ROAD.centerX - hw, y); first = false; }
+    else ctx.lineTo(ROAD.centerX - hw, y);
+  }
+  ctx.stroke();
+  ctx.beginPath();
+  first = true;
+  for (let y = PLAY_BOTTOM; y >= PLAY_TOP; y -= sampleStep) {
+    const z = screenYToZ(y);
+    const hw = roadHalfWidthAt(z);
+    if (first) { ctx.moveTo(ROAD.centerX + hw, y); first = false; }
+    else ctx.lineTo(ROAD.centerX + hw, y);
+  }
+  ctx.stroke();
+
+  const dashLength = 24;
+  const dashGap = 18;
+  const dashCycle = dashLength + dashGap;
+  const dashOffset = trackPos % dashCycle;
+  ctx.strokeStyle = '#ffe000';
+  ctx.lineWidth = 2;
+  // Start zOffset well before 0 so dashes also render in the rear-view area
+  // (visible space below the lifted player). Use -PLAYER_SCREEN_Y_LIFT - dashCycle
+  // to safely cover that range plus a buffer.
+  const dashStartZ = -(PLAYER_SCREEN_Y_LIFT + dashCycle);
+  for (let zOffset = -dashOffset + dashStartZ; zOffset < PLAY_HEIGHT + dashCycle; zOffset += dashCycle) {
+    const zStart = trackPos + zOffset;
+    const zEnd = zStart + dashLength;
+    const yStart = zToScreenY(zStart);
+    const yEnd = zToScreenY(zEnd);
+    if (yStart > PLAY_BOTTOM && yEnd > PLAY_BOTTOM) continue;
+    if (yStart < PLAY_TOP - dashLength) continue;
+    const hwStart = roadHalfWidthAt(zStart);
+    const hwEnd = roadHalfWidthAt(zEnd);
+    ctx.beginPath();
+    ctx.moveTo(ROAD.centerX - hwStart * 0.33, Math.min(yStart, PLAY_BOTTOM));
+    ctx.lineTo(ROAD.centerX - hwEnd * 0.33, Math.max(yEnd, PLAY_TOP));
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(ROAD.centerX + hwStart * 0.33, Math.min(yStart, PLAY_BOTTOM));
+    ctx.lineTo(ROAD.centerX + hwEnd * 0.33, Math.max(yEnd, PLAY_TOP));
+    ctx.stroke();
+  }
+}
+
+function drawTree(t) {
+  const sy = zToScreenY(t.z);
+  if (sy < PLAY_TOP - 30 || sy > PLAY_BOTTOM + 10) return;
+  const sx = t.x;
+  const s = t.size;
+  if (t.kind === 'pine') {
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.beginPath();
+    ctx.ellipse(sx + 2, sy + 2, 10 * s, 4 * s, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#5a3a1a';
+    ctx.fillRect(sx - 2, sy - 2, 4, 8);
+    ctx.fillStyle = '#0e5a20';
+    ctx.beginPath();
+    ctx.arc(sx, sy - 4, 10 * s, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#1a7a30';
+    ctx.beginPath();
+    ctx.arc(sx - 3 * s, sy - 6 * s, 6 * s, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#2c9a44';
+    ctx.beginPath();
+    ctx.arc(sx - 4 * s, sy - 7 * s, 2.5 * s, 0, Math.PI*2);
+    ctx.fill();
+  } else {
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.beginPath();
+    ctx.ellipse(sx + 1, sy + 2, 8 * s, 3 * s, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#1a6a26';
+    ctx.beginPath();
+    ctx.arc(sx, sy, 7 * s, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#2a8a36';
+    ctx.beginPath();
+    ctx.arc(sx - 2 * s, sy - 2 * s, 4 * s, 0, Math.PI*2);
+    ctx.fill();
+  }
+}
+
+function drawPlayerCar(cx, cy, rotation) {
+  const w = 26, h = 44;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(0.88, 0.88);
+  if (rotation) ctx.rotate(rotation);
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(-w/2 + 2, -h/2 + 3, w, h);
+  ctx.fillStyle = '#cccccc';
+  roundRect(-w/2, -h/2, w, h, 4);
+  ctx.fillStyle = '#a0a0a0';
+  roundRect(-w/2 + 2, -h/2 + 2, w - 4, 10, 2);
+  ctx.fillStyle = '#999999';
+  roundRect(-w/2 + 2, h/2 - 8, w - 4, 6, 2);
+  ctx.fillStyle = '#1a3a5a';
+  roundRect(-w/2 + 4, -h/2 + 13, w - 8, 8, 1);
+  roundRect(-w/2 + 4, h/2 - 16, w - 8, 6, 1);
+  ctx.fillStyle = '#bbbbbb';
+  ctx.fillRect(-w/2 + 4, -h/2 + 22, w - 8, 10);
+  ctx.fillStyle = '#ffffaa';
+  ctx.fillRect(-w/2 + 3, -h/2 + 1, 4, 3);
+  ctx.fillRect( w/2 - 7, -h/2 + 1, 4, 3);
+  ctx.fillStyle = '#cc2222';
+  ctx.fillRect(-w/2 + 3, h/2 - 4, 4, 3);
+  ctx.fillRect( w/2 - 7, h/2 - 4, 4, 3);
+  if (input.gunsHeld && fireCooldown > 0.05) {
+    ctx.fillStyle = '#ffee88';
+    ctx.beginPath();
+    ctx.arc(-5, -h/2 - 3, 3, 0, Math.PI*2);
+    ctx.arc( 5, -h/2 - 3, 3, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawPlayer() {
+  if (!player.alive) return;
+  if (player.invincibleTimer > 0 && Math.floor(player.invincibleTimer * 12) % 2 === 0) return;
+  const px = ROAD.centerX + player.x;
+  drawPlayerCar(px, getPlayerScreenY(), 0);
+}
+
+function drawSwitchblade(cx, cy, rotation, damage) {
+  // damage: 0=fresh, 1=one hit, 2=two hits
+  const w = 26, h = 44;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(0.88, 0.88);
+  if (rotation) ctx.rotate(rotation);
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(-w/2 + 2, -h/2 + 3, w, h);
+  ctx.fillStyle = '#1a3580';
+  roundRect(-w/2, -h/2, w, h, 4);
+  ctx.fillStyle = '#0e2560';
+  roundRect(-w/2 + 2, -h/2 + 2, w - 4, 10, 2);
+  ctx.fillStyle = '#08184a';
+  roundRect(-w/2 + 2, h/2 - 8, w - 4, 6, 2);
+  ctx.fillStyle = '#445588';
+  roundRect(-w/2 + 4, -h/2 + 13, w - 8, 8, 1);
+  roundRect(-w/2 + 4, h/2 - 16, w - 8, 6, 1);
+  ctx.fillStyle = '#234080';
+  ctx.fillRect(-w/2 + 4, -h/2 + 22, w - 8, 10);
+  ctx.fillStyle = '#ffffaa';
+  ctx.fillRect(-w/2 + 3, -h/2 + 1, 4, 3);
+  ctx.fillRect( w/2 - 7, -h/2 + 1, 4, 3);
+  ctx.fillStyle = '#dddddd';
+  ctx.fillRect(-w/2 - 6, -h/2 + 10, 6, 3);
+  ctx.fillRect(-w/2 - 6, h/2 - 13, 6, 3);
+  ctx.fillRect( w/2,     -h/2 + 10, 6, 3);
+  ctx.fillRect( w/2,     h/2 - 13, 6, 3);
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(-w/2 - 6, -h/2 + 10);
+  ctx.lineTo(-w/2 - 11, -h/2 + 11.5);
+  ctx.lineTo(-w/2 - 6, -h/2 + 13);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-w/2 - 6, h/2 - 13);
+  ctx.lineTo(-w/2 - 11, h/2 - 11.5);
+  ctx.lineTo(-w/2 - 6, h/2 - 10);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo( w/2 + 6, -h/2 + 10);
+  ctx.lineTo( w/2 + 11, -h/2 + 11.5);
+  ctx.lineTo( w/2 + 6, -h/2 + 13);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo( w/2 + 6, h/2 - 13);
+  ctx.lineTo( w/2 + 11, h/2 - 11.5);
+  ctx.lineTo( w/2 + 6, h/2 - 10);
+  ctx.fill();
+
+  // Damage scorch marks
+  if (damage >= 1) {
+    ctx.fillStyle = '#221518';
+    ctx.beginPath();
+    ctx.ellipse(-5, 4, 4, 3, 0, 0, Math.PI*2);
+    ctx.fill();
+  }
+  if (damage >= 2) {
+    ctx.fillStyle = '#1a0a10';
+    ctx.beginPath();
+    ctx.ellipse(4, -3, 5, 4, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(-3, -8, 3, 2, 0, 0, Math.PI*2);
+    ctx.fill();
+    // small flame highlight
+    ctx.fillStyle = '#ff8800';
+    ctx.fillRect(3, -1, 2, 2);
+  }
+
+  ctx.restore();
+}
+
+function drawBulletproof(cx, cy, rotation) {
+  // Drab olive armored sedan, chunkier than other cars, NO chrome blades
+  const w = 30, h = 46;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(0.88, 0.88);
+  if (rotation) ctx.rotate(rotation);
+
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(-w/2 + 2, -h/2 + 4, w, h);
+
+  // Body — olive / drab military
+  ctx.fillStyle = '#5a6638';
+  roundRect(-w/2, -h/2, w, h, 4);
+  // Hood (darker)
+  ctx.fillStyle = '#404a2a';
+  roundRect(-w/2 + 2, -h/2 + 2, w - 4, 11, 2);
+  // Trunk
+  ctx.fillStyle = '#3a4424';
+  roundRect(-w/2 + 2, h/2 - 9, w - 4, 7, 2);
+  // Reinforced front bumper (chrome bar)
+  ctx.fillStyle = '#cccccc';
+  ctx.fillRect(-w/2 + 3, -h/2, w - 6, 2);
+  // Windshield + rear window — small slits (armored)
+  ctx.fillStyle = '#1a2a14';
+  roundRect(-w/2 + 5, -h/2 + 14, w - 10, 6, 1);
+  roundRect(-w/2 + 5, h/2 - 18, w - 10, 5, 1);
+  // Roof
+  ctx.fillStyle = '#4c562e';
+  ctx.fillRect(-w/2 + 4, -h/2 + 21, w - 8, 12);
+  // Armor rivets along sides (decorative)
+  ctx.fillStyle = '#2a301a';
+  for (let r = 0; r < 4; r++) {
+    ctx.fillRect(-w/2 + 1, -h/2 + 16 + r * 6, 2, 2);
+    ctx.fillRect( w/2 - 3, -h/2 + 16 + r * 6, 2, 2);
+  }
+  // Headlights — narrow slits
+  ctx.fillStyle = '#ffffaa';
+  ctx.fillRect(-w/2 + 4, -h/2 + 2, 4, 2);
+  ctx.fillRect( w/2 - 8, -h/2 + 2, 4, 2);
+  // Taillights
+  ctx.fillStyle = '#aa2222';
+  ctx.fillRect(-w/2 + 4, h/2 - 4, 4, 2);
+  ctx.fillRect( w/2 - 8, h/2 - 4, 4, 2);
+  // Wheels — thick black, NO blades
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(-w/2 - 1, -h/2 + 12, 3, 9);
+  ctx.fillRect( w/2 - 2, -h/2 + 12, 3, 9);
+  ctx.fillRect(-w/2 - 1, h/2 - 21, 3, 9);
+  ctx.fillRect( w/2 - 2, h/2 - 21, 3, 9);
+
+  ctx.restore();
+}
+
+function drawSedan(cx, cy, rotation, dinged) {
+  const w = 26, h = 42;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(0.88, 0.88);
+  if (rotation) ctx.rotate(rotation);
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(-w/2 + 2, -h/2 + 3, w, h);
+  // If dinged once, flash slightly red-tinted body briefly
+  ctx.fillStyle = dinged ? '#a05c70' : '#5a90d0';
+  roundRect(-w/2, -h/2, w, h, 5);
+  ctx.fillStyle = dinged ? '#904c60' : '#4a80c0';
+  roundRect(-w/2 + 2, -h/2 + 2, w - 4, 9, 2);
+  ctx.fillStyle = dinged ? '#804055' : '#4078b0';
+  roundRect(-w/2 + 2, h/2 - 8, w - 4, 6, 2);
+  ctx.fillStyle = '#b0d0e8';
+  roundRect(-w/2 + 4, -h/2 + 12, w - 8, 8, 1);
+  roundRect(-w/2 + 4, h/2 - 16, w - 8, 6, 1);
+  ctx.fillStyle = dinged ? '#985468' : '#5088c8';
+  ctx.fillRect(-w/2 + 4, -h/2 + 21, w - 8, 10);
+  ctx.fillStyle = '#ffffaa';
+  ctx.fillRect(-w/2 + 3, -h/2 + 1, 4, 3);
+  ctx.fillRect( w/2 - 7, -h/2 + 1, 4, 3);
+  ctx.fillStyle = '#cc2222';
+  ctx.fillRect(-w/2 + 3, h/2 - 4, 4, 3);
+  ctx.fillRect( w/2 - 7, h/2 - 4, 4, 3);
+  ctx.fillStyle = '#222';
+  ctx.fillRect(-w/2 - 1, -h/2 + 11, 2, 7);
+  ctx.fillRect( w/2 - 1, -h/2 + 11, 2, 7);
+  ctx.fillRect(-w/2 - 1, h/2 - 17, 2, 7);
+  ctx.fillRect( w/2 - 1, h/2 - 17, 2, 7);
+  ctx.restore();
+}
+
+function drawTaxi(cx, cy, rotation, dinged) {
+  const w = 26, h = 42;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(0.88, 0.88);
+  if (rotation) ctx.rotate(rotation);
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(-w/2 + 2, -h/2 + 3, w, h);
+  ctx.fillStyle = dinged ? '#c08866' : '#ffcc00';
+  roundRect(-w/2, -h/2, w, h, 5);
+  ctx.fillStyle = dinged ? '#a87655' : '#e8b800';
+  roundRect(-w/2 + 2, -h/2 + 2, w - 4, 9, 2);
+  ctx.fillStyle = dinged ? '#986848' : '#d4a600';
+  roundRect(-w/2 + 2, h/2 - 8, w - 4, 6, 2);
+  ctx.fillStyle = '#a0c0d8';
+  roundRect(-w/2 + 4, -h/2 + 12, w - 8, 8, 1);
+  roundRect(-w/2 + 4, h/2 - 16, w - 8, 6, 1);
+  ctx.fillStyle = dinged ? '#b07c54' : '#f0c000';
+  ctx.fillRect(-w/2 + 4, -h/2 + 21, w - 8, 10);
+  ctx.fillStyle = '#222';
+  ctx.fillRect(-3, -2, 6, 4);
+  ctx.fillStyle = '#ffcc00';
+  ctx.fillRect(-2, -1, 4, 2);
+  ctx.fillStyle = '#000';
+  for (let i = 0; i < 5; i++) {
+    if (i % 2 === 0) {
+      ctx.fillRect(-w/2 + 2 + i * 4, h/2 - 8, 4, 2);
+      ctx.fillRect(-w/2 + 4 + i * 4, h/2 - 6, 4, 2);
+    }
+  }
+  ctx.fillStyle = '#ffffaa';
+  ctx.fillRect(-w/2 + 3, -h/2 + 1, 4, 3);
+  ctx.fillRect( w/2 - 7, -h/2 + 1, 4, 3);
+  ctx.fillStyle = '#cc2222';
+  ctx.fillRect(-w/2 + 3, h/2 - 4, 4, 3);
+  ctx.fillRect( w/2 - 7, h/2 - 4, 4, 3);
+  ctx.fillStyle = '#222';
+  ctx.fillRect(-w/2 - 1, -h/2 + 11, 2, 7);
+  ctx.fillRect( w/2 - 1, -h/2 + 11, 2, 7);
+  ctx.fillRect(-w/2 - 1, h/2 - 17, 2, 7);
+  ctx.fillRect( w/2 - 1, h/2 - 17, 2, 7);
+  ctx.restore();
+}
+
+function drawEnemy(e) {
+  const sy = zToScreenY(e.z);
+  if (sy < PLAY_TOP - 30 || sy > PLAY_BOTTOM + 10) return;
+  const sx = ROAD.centerX + e.x;
+  const rot = e.state === 'spinning' ? e.spin : 0;
+  // Flash damage tint briefly after a dink
+  const dinged = (e.faction === 'civilian' && e.warningHits > 0);
+
+  if (e.type === 'switchblade') {
+    const damage = e.maxHp ? (e.maxHp - e.hp) : 0;
+    drawSwitchblade(sx, sy, rot, damage);
+  }
+  else if (e.type === 'bulletproof') {
+    // Bumped bulletproof cars get a tumble-rotation in addition to spin
+    drawBulletproof(sx, sy, e.bumped ? (e.spin || 0) : rot);
+  }
+  else if (e.type === 'sedan') drawSedan(sx, sy, rot, dinged);
+  else if (e.type === 'taxi') drawTaxi(sx, sy, rot, dinged);
+
+  // Smoke for spinning cars
+  if (e.state === 'spinning' && Math.random() < 0.3) {
+    particles.push({
+      x: e.x, z: e.z,
+      vx: (Math.random() - 0.5) * 30,
+      vz: -20 + Math.random() * 30,
+      life: 0.6,
+      color: 'rgba(180,180,180,0.7)'
+    });
+  }
+  // Light smoke puff for dinged civilians as a warning
+  if (e.faction === 'civilian' && e.warningHits > 0 && Math.random() < 0.15) {
+    particles.push({
+      x: e.x, z: e.z + 12,
+      vx: (Math.random() - 0.5) * 20,
+      vz: 30 + Math.random() * 20,
+      life: 0.5,
+      color: 'rgba(220,220,220,0.6)'
+    });
+  }
+}
+
+function drawWreck(w) {
+  const sy = zToScreenY(w.z);
+  if (sy < PLAY_TOP - 30 || sy > PLAY_BOTTOM + 10) return;
+  const sx = ROAD.centerX + w.x;
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.rotate(w.rotation);
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(-12 + 2, -20 + 3, 24, 38);
+  ctx.fillStyle = '#444';
+  roundRect(-13, -22, 26, 44, 4);
+  ctx.fillStyle = '#222';
+  ctx.fillRect(-10, -18, 20, 36);
+  if (Math.floor(w.flameTimer * 20) % 2 === 0) {
+    ctx.fillStyle = '#ff8800';
+    ctx.beginPath();
+    ctx.arc(-5, -6, 3, 0, Math.PI*2);
+    ctx.arc(4, 2, 3, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#ffee44';
+    ctx.beginPath();
+    ctx.arc(-4, -7, 1.5, 0, Math.PI*2);
+    ctx.arc(5, 1, 1.5, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+  if (Math.random() < 0.4) {
+    particles.push({
+      x: w.x, z: w.z,
+      vx: (Math.random() - 0.5) * 20,
+      vz: 10 + Math.random() * 20,
+      life: 0.8,
+      color: 'rgba(80,80,80,0.6)'
+    });
+  }
+}
+
+function drawTruck(t) {
+  // Truck screen position is computed from zOffset directly
+  const sy = getPlayerScreenY() - t.zOffset;
+  if (sy < PLAY_TOP - 80 || sy > PLAY_BOTTOM + 30) return;
+  const sx = ROAD.centerX + t.x;
+  ctx.save();
+  ctx.translate(sx, sy);
+  const w = 44, h = 90;
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(-w/2 + 2, -h/2 + 4, w, h);
+  ctx.fillStyle = '#999999';
+  roundRect(-w/2, -h/2 + 22, w, h - 22, 2);
+  ctx.fillStyle = '#777777';
+  ctx.fillRect(-w/2 + 3, -h/2 + 30, w - 6, h - 50);
+  if (t.state === 'slowing' || t.state === 'dropping') {
+    ctx.fillStyle = '#222';
+    ctx.fillRect(-w/2 + 4, h/2 - 16, w - 8, 14);
+    ctx.fillStyle = '#555';
+    ctx.beginPath();
+    ctx.moveTo(-w/2 + 6, h/2 - 2);
+    ctx.lineTo( w/2 - 6, h/2 - 2);
+    ctx.lineTo( w/2 - 8, h/2 + 14);
+    ctx.lineTo(-w/2 + 8, h/2 + 14);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-w/2 + 8, h/2 + 14);
+    ctx.lineTo(-w/2 + 6, h/2 - 2);
+    ctx.moveTo( w/2 - 8, h/2 + 14);
+    ctx.lineTo( w/2 - 6, h/2 - 2);
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = '#555';
+    ctx.fillRect(-w/2 + 4, h/2 - 6, w - 8, 4);
+  }
+  ctx.fillStyle = '#bbbbbb';
+  roundRect(-w/2 + 2, -h/2, w - 4, 24, 3);
+  ctx.fillStyle = '#1a3a5a';
+  roundRect(-w/2 + 5, -h/2 + 4, w - 10, 8, 1);
+  ctx.fillStyle = '#ffffaa';
+  ctx.fillRect(-w/2 + 4, -h/2 + 1, 5, 3);
+  ctx.fillRect( w/2 - 9, -h/2 + 1, 5, 3);
+  ctx.fillStyle = '#222';
+  ctx.fillRect(-w/2 + 2, -h/2 + 22, w - 4, 2);
+  ctx.fillStyle = '#222';
+  ctx.fillRect(-w/2 - 1, -h/2 + 16, 2, 8);
+  ctx.fillRect( w/2 - 1, -h/2 + 16, 2, 8);
+  ctx.fillRect(-w/2 - 1, h/2 - 30, 2, 10);
+  ctx.fillRect( w/2 - 1, h/2 - 30, 2, 10);
+  ctx.fillRect(-w/2 - 1, h/2 - 12, 2, 10);
+  ctx.fillRect( w/2 - 1, h/2 - 12, 2, 10);
+  ctx.fillStyle = '#ffcc00';
+  ctx.font = 'bold 6px Courier New, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('WEAPONS', 0, 0);
+  ctx.restore();
+}
+
+function drawWeaponsVan(v) {
+  const sy = zToScreenY(v.z);
+  if (sy < PLAY_TOP - 80 || sy > PLAY_BOTTOM + 30) return;
+  const sx = ROAD.centerX + v.x;
+  ctx.save();
+  ctx.translate(sx, sy);
+  const w = 44, h = 90;
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(-w/2 + 2, -h/2 + 4, w, h);
+  // Trailer body
+  ctx.fillStyle = '#999999';
+  roundRect(-w/2, -h/2 + 22, w, h - 22, 2);
+  ctx.fillStyle = '#777777';
+  ctx.fillRect(-w/2 + 3, -h/2 + 30, w - 6, h - 50);
+
+  // Trailer rear (open or closed) — ramp down only in 'waiting'
+  const rampDown = (v.state === 'waiting' || v.state === 'closing');
+  if (rampDown) {
+    // Open back — black interior visible
+    ctx.fillStyle = '#222';
+    ctx.fillRect(-w/2 + 4, h/2 - 16, w - 8, 14);
+    // Ramp
+    ctx.fillStyle = '#555';
+    ctx.beginPath();
+    ctx.moveTo(-w/2 + 6, h/2 - 2);
+    ctx.lineTo( w/2 - 6, h/2 - 2);
+    ctx.lineTo( w/2 - 8, h/2 + 14);
+    ctx.lineTo(-w/2 + 8, h/2 + 14);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-w/2 + 8, h/2 + 14);
+    ctx.lineTo(-w/2 + 6, h/2 - 2);
+    ctx.moveTo( w/2 - 8, h/2 + 14);
+    ctx.lineTo( w/2 - 6, h/2 - 2);
+    ctx.stroke();
+  } else {
+    // Closed back
+    ctx.fillStyle = '#555';
+    ctx.fillRect(-w/2 + 4, h/2 - 6, w - 8, 4);
+  }
+
+  // Cab
+  ctx.fillStyle = '#bbbbbb';
+  roundRect(-w/2 + 2, -h/2, w - 4, 24, 3);
+  ctx.fillStyle = '#1a3a5a';
+  roundRect(-w/2 + 5, -h/2 + 4, w - 10, 8, 1);
+  ctx.fillStyle = '#ffffaa';
+  ctx.fillRect(-w/2 + 4, -h/2 + 1, 5, 3);
+  ctx.fillRect( w/2 - 9, -h/2 + 1, 5, 3);
+  ctx.fillStyle = '#222';
+  ctx.fillRect(-w/2 + 2, -h/2 + 22, w - 4, 2);
+  // Wheels
+  ctx.fillStyle = '#222';
+  ctx.fillRect(-w/2 - 1, -h/2 + 16, 2, 8);
+  ctx.fillRect( w/2 - 1, -h/2 + 16, 2, 8);
+  ctx.fillRect(-w/2 - 1, h/2 - 30, 2, 10);
+  ctx.fillRect( w/2 - 1, h/2 - 30, 2, 10);
+  ctx.fillRect(-w/2 - 1, h/2 - 12, 2, 10);
+  ctx.fillRect( w/2 - 1, h/2 - 12, 2, 10);
+
+  // === Weapon-type identifier on the side panel ===
+  // Background plate
+  let labelColor = '#888';
+  let labelText = '???';
+  let glyphColor = '#fff';
+  if (v.weaponType === 'oil') {
+    labelColor = '#1a1a1a';
+    labelText = 'OIL';
+    glyphColor = '#777';
+  } else if (v.weaponType === 'missiles') {
+    labelColor = '#aa4400';
+    labelText = 'MSL';
+    glyphColor = '#ffcc44';
+  } else if (v.weaponType === 'smoke') {
+    labelColor = '#7a8898';
+    labelText = 'SMK';
+    glyphColor = '#fff';
+  }
+  // Big colored band on each side
+  ctx.fillStyle = labelColor;
+  ctx.fillRect(-w/2 + 4, -h/2 + 32, w - 8, 14);
+  // Glyph: small icon depicting the weapon
+  ctx.fillStyle = glyphColor;
+  if (v.weaponType === 'oil') {
+    ctx.beginPath();
+    ctx.ellipse(0, -h/2 + 39, 8, 3, 0, 0, Math.PI*2);
+    ctx.fill();
+  } else if (v.weaponType === 'missiles') {
+    ctx.beginPath();
+    ctx.moveTo(-7, -h/2 + 41);
+    ctx.lineTo(7, -h/2 + 41);
+    ctx.lineTo(0, -h/2 + 33);
+    ctx.closePath();
+    ctx.fill();
+  } else if (v.weaponType === 'smoke') {
+    ctx.beginPath();
+    ctx.arc(-3, -h/2 + 39, 3, 0, Math.PI*2);
+    ctx.arc(3, -h/2 + 38, 4, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // "WEAPONS" text below
+  ctx.fillStyle = '#ffcc00';
+  ctx.font = 'bold 6px Courier New, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('WEAPONS', 0, 8);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 8px Courier New, monospace';
+  ctx.fillText(labelText, 0, -h/2 + 56);
+
+  ctx.restore();
+}
+
+function drawOilSlick(s) {
+  const sy = zToScreenY(s.z);
+  if (sy < PLAY_TOP - 20 || sy > PLAY_BOTTOM) return;
+  const sx = ROAD.centerX + s.x;
+  // Fade out at end of life
+  const lifeFrac = Math.max(0, Math.min(1, s.life / s.lifeMax));
+  ctx.globalAlpha = lifeFrac;
+  // Dark puddle
+  ctx.fillStyle = '#1a1a18';
+  ctx.beginPath();
+  ctx.ellipse(sx, sy, 14, 7, 0, 0, Math.PI*2);
+  ctx.fill();
+  // Inner darker
+  ctx.fillStyle = '#0a0a08';
+  ctx.beginPath();
+  ctx.ellipse(sx, sy, 10, 5, 0, 0, Math.PI*2);
+  ctx.fill();
+  // Sheen highlight
+  ctx.fillStyle = 'rgba(180, 160, 200, 0.55)';
+  ctx.beginPath();
+  ctx.ellipse(sx - 3, sy - 1, 3, 1.5, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+function drawBullet(b) {
+  const sy = zToScreenY(b.z);
+  if (sy < PLAY_TOP - 10 || sy > PLAY_BOTTOM) return;
+  const sx = ROAD.centerX + b.x;
+  ctx.fillStyle = 'rgba(255, 220, 80, 0.5)';
+  ctx.fillRect(sx - 1.5, sy + 4, 3, 8);
+  ctx.fillStyle = '#ffee44';
+  ctx.fillRect(sx - 1.5, sy - 3, 3, 8);
+  ctx.fillStyle = '#ffffaa';
+  ctx.fillRect(sx - 1, sy - 1, 2, 3);
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    const sy = zToScreenY(p.z);
+    if (sy < PLAY_TOP || sy > PLAY_BOTTOM) continue;
+    const sx = ROAD.centerX + p.x;
+    ctx.fillStyle = p.color;
+    ctx.globalAlpha = Math.min(1, p.life * 2);
+    ctx.fillRect(sx - 2, sy - 2, 4, 4);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawSteeringBand() {
+  const bandGrad = ctx.createLinearGradient(0, BAND_TOP, 0, VH);
+  bandGrad.addColorStop(0, 'rgba(20, 30, 25, 0.85)');
+  bandGrad.addColorStop(1, 'rgba(10, 18, 14, 0.95)');
+  ctx.fillStyle = bandGrad;
+  ctx.fillRect(0, BAND_TOP, VW, BAND_HEIGHT);
+  ctx.strokeStyle = 'rgba(255, 204, 0, 0.4)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, BAND_TOP);
+  ctx.lineTo(VW, BAND_TOP);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(255, 204, 0, 0.10)';
+  ctx.beginPath();
+  ctx.moveTo(VW / 2, BAND_TOP + 6);
+  ctx.lineTo(VW / 2, VH - 6);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(255, 204, 0, 0.18)';
+  for (let i = 0; i <= 4; i++) {
+    const ty = BAND_TOP + (BAND_HEIGHT * i / 4);
+    ctx.beginPath();
+    ctx.moveTo(0, ty);
+    ctx.lineTo(8, ty);
+    ctx.moveTo(VW - 8, ty);
+    ctx.lineTo(VW, ty);
+    ctx.stroke();
+  }
+  ctx.fillStyle = 'rgba(255, 204, 0, 0.35)';
+  ctx.font = 'bold 9px Courier New, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('FAST', VW / 2, BAND_TOP + 12);
+  ctx.fillText('SLOW', VW / 2, VH - 6);
+  if (input.dragging) {
+    const tx = input.dragX;
+    const ty = input.dragY;
+    ctx.strokeStyle = 'rgba(255, 220, 60, 0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(tx, ty, 16, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255, 220, 60, 0.9)';
+    ctx.beginPath();
+    ctx.arc(tx, ty, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 220, 60, 0.5)';
+    ctx.beginPath();
+    ctx.moveTo(tx - 22, ty); ctx.lineTo(tx - 18, ty);
+    ctx.moveTo(tx + 18, ty); ctx.lineTo(tx + 22, ty);
+    ctx.moveTo(tx, ty - 22); ctx.lineTo(tx, ty - 18);
+    ctx.moveTo(tx, ty + 18); ctx.lineTo(tx, ty + 22);
+    ctx.stroke();
+  }
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// Global error visibility — log to console rather than silently dying
+window.addEventListener('error', (ev) => {
+  console.error('[Spy Hunter window.error]',
+    'message:', ev.message,
+    'at:', ev.filename + ':' + ev.lineno + ':' + ev.colno,
+    'error:', ev.error,
+    'stack:', ev.error && ev.error.stack);
+});
+window.addEventListener('unhandledrejection', (ev) => {
+  console.error('[Spy Hunter unhandledrejection]', ev.reason, ev.reason && ev.reason.stack);
+});
+
+function loop(now) {
+  const dt = Math.min(0.05, (now - lastTime) / 1000);
+  lastTime = now;
+  try {
+    update(dt);
+    render();
+  } catch (err) {
+    console.error('[Spy Hunter loop error]',
+      'message:', err && err.message,
+      'stack:', err && err.stack,
+      'name:', err && err.name);
+  }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+})();
+</script>
+
+</body>
+</html>
