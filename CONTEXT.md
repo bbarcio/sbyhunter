@@ -9,10 +9,23 @@ This document captures every mechanic we've built and the design reasoning behin
 ## Architecture
 
 - **Single `index.html`** — all HTML, CSS, JavaScript inline. No build step, no frameworks.
+- **Lives in `docs/`** — GitHub Pages serves only this folder. Dev files (CLAUDE.md, CONTEXT.md) stay in repo root and are not publicly accessible.
 - **HTML5 Canvas 2D** for rendering. No WebGL.
 - **Virtual resolution** of 360×640 (portrait). Scaled to fit screen with letterbox.
 - **Mobile-first.** Touch controls. iPad fixed via `navigator.maxTouchPoints > 1`.
-- **PWA-ready.** Meta tags for `apple-mobile-web-app-capable`, `viewport-fit=cover`, etc.
+
+## PWA setup (add-to-home-screen + offline)
+
+Same pattern as sister project `btempest`. Everything is inline in the single HTML file — no external manifest.json or sw.js files needed.
+
+- **Icon**: Canvas-generated 512×512 PNG (road + car + "SPY HUNTER" text), injected as data URL into `<link rel="apple-touch-icon">` and `<link rel="icon">`.
+- **Manifest**: Created as a JSON blob URL at runtime, appended as `<link rel="manifest">`. `display: fullscreen`, `orientation: any`.
+- **Service worker**: Inline blob-registered worker using **stale-while-revalidate** caching:
+  - **Install**: Caches the page. `skipWaiting()` to activate immediately.
+  - **Fetch**: Serves cached version instantly (offline works). Fetches fresh copy from network in background. If network succeeds, updates cache for next visit.
+  - **Activate**: Cleans up old cache versions. `clients.claim()` to take control.
+  - **Cache name**: `'spyhunter-v1'` — bump this version string when deploying breaking changes to force a full re-cache.
+- **To install on iPhone**: Open in Safari → Share → "Add to Home Screen". Launches fullscreen, works offline.
 
 ## Core game loop
 

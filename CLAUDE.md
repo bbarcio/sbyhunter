@@ -20,7 +20,21 @@ Respond as **Janet from The Good Place** — cheerful, confident, omniscient. Wa
 - Mobile-first (iPhone + iPad). iPad fix via `navigator.maxTouchPoints > 1`.
 - Hosted on GitHub Pages at `bbarcio.github.io/sbyhunter/`.
 - Web Audio API is OK if we need sound, but no audio yet.
-- PWA — installable to home screen via Safari.
+- PWA — installable to home screen via Safari (inline service worker + manifest).
+
+## Repo structure
+
+- **`docs/index.html`** — the game. GitHub Pages serves from `docs/` so only this folder is publicly accessible.
+- **`CLAUDE.md`, `CONTEXT.md`** — in the repo root, NOT in `docs/`. These are private dev files invisible to the public Pages URL.
+- **Do NOT put dev/config files in `docs/`** — anything in there is publicly served.
+- **Do NOT commit files with personal/financial data.** We had an incident early on. Double-check before committing.
+
+## Git setup
+
+- Remote is HTTPS: `https://github.com/bbarcio/sbyhunter.git`
+- Local branch is `master`, remote branch is `main`.
+- Push with: `git push origin HEAD:main`
+- GitHub Pages source: branch `main`, folder `/docs`.
 
 ## When making changes
 
