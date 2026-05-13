@@ -8,6 +8,10 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-title" content="Spy Hunter">
+<meta name="description" content="Spy Hunter arcade game — drive, shoot, and survive">
+<link id="touch-icon" rel="apple-touch-icon">
+<link id="pwa-icon" rel="icon" type="image/png">
 <title>Spy Hunter</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -151,6 +155,94 @@ margin-top: 8px;
 }
 #start-btn:active { transform: scale(0.96); }
 </style>
+
+<script>
+// ── PWA: Generate home-screen icon ──
+(function(){
+  const S=512, ic=document.createElement('canvas');
+  ic.width=S; ic.height=S;
+  const g=ic.getContext('2d');
+  // Background
+  g.fillStyle='#1a1a2e'; g.fillRect(0,0,S,S);
+  // Road
+  g.fillStyle='#333'; g.fillRect(S*0.3,0,S*0.4,S);
+  // Lane lines
+  g.strokeStyle='#ffcc00'; g.lineWidth=4; g.setLineDash([30,20]);
+  g.beginPath(); g.moveTo(S*0.5,0); g.lineTo(S*0.5,S); g.stroke();
+  g.setLineDash([]);
+  // Road edges
+  g.strokeStyle='#fff'; g.lineWidth=3;
+  g.beginPath(); g.moveTo(S*0.3,0); g.lineTo(S*0.3,S); g.stroke();
+  g.beginPath(); g.moveTo(S*0.7,0); g.lineTo(S*0.7,S); g.stroke();
+  // Player car (triangle)
+  g.fillStyle='#ff3333';
+  g.beginPath(); g.moveTo(S*0.5,S*0.25); g.lineTo(S*0.42,S*0.55); g.lineTo(S*0.58,S*0.55); g.closePath(); g.fill();
+  g.strokeStyle='#fff'; g.lineWidth=2; g.stroke();
+  // Title
+  g.fillStyle='#ffcc00'; g.font='bold 60px Courier New,monospace'; g.textAlign='center';
+  g.shadowColor='#ff8800'; g.shadowBlur=16;
+  g.fillText('SPY',S*0.5,S*0.78);
+  g.fillText('HUNTER',S*0.5,S*0.9);
+  g.shadowBlur=0;
+  // Set icons
+  const dataURL=ic.toDataURL('image/png');
+  document.getElementById('touch-icon').href=dataURL;
+  document.getElementById('pwa-icon').href=dataURL;
+
+  // ── PWA: Inline manifest ──
+  const manifest={
+    name:'Spy Hunter',
+    short_name:'Spy Hunter',
+    description:'Classic Spy Hunter arcade game',
+    start_url:'.',
+    display:'fullscreen',
+    orientation:'any',
+    background_color:'#000000',
+    theme_color:'#000000',
+    icons:[{src:dataURL,sizes:'512x512',type:'image/png',purpose:'any maskable'}]
+  };
+  const blob=new Blob([JSON.stringify(manifest)],{type:'application/manifest+json'});
+  const link=document.createElement('link');
+  link.rel='manifest'; link.href=URL.createObjectURL(blob);
+  document.head.appendChild(link);
+})();
+
+// ── PWA: Inline service worker (stale-while-revalidate) ──
+if('serviceWorker' in navigator){
+  const swCode=`
+    const CACHE='spyhunter-v1';
+    self.addEventListener('install',e=>{
+      e.waitUntil(
+        caches.open(CACHE).then(c=>c.addAll([self.location.href]))
+          .then(()=>self.skipWaiting())
+      );
+    });
+    self.addEventListener('activate',e=>{
+      e.waitUntil(
+        caches.keys().then(keys=>
+          Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))
+        ).then(()=>clients.claim())
+      );
+    });
+    self.addEventListener('fetch',e=>{
+      e.respondWith(
+        caches.open(CACHE).then(cache=>
+          cache.match(e.request).then(cached=>{
+            const netFetch=fetch(e.request).then(response=>{
+              if(response&&response.ok) cache.put(e.request,response.clone());
+              return response;
+            }).catch(()=>cached);
+            return cached||netFetch;
+          })
+        )
+      );
+    });
+  `;
+  const swBlob=new Blob([swCode],{type:'application/javascript'});
+  const swURL=URL.createObjectURL(swBlob);
+  navigator.serviceWorker.register(swURL,{scope:'./'}).catch(()=>{});
+}
+</script>
 
 </head>
 <body>
