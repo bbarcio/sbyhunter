@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v4';
+    const CACHE='spyhunter-v5';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -1527,7 +1527,14 @@ function update(dt) {
           }
         }
       } else if (e.faction === 'civilian') {
-        e.vx += (e.laneX - e.x) * 0.5 * dt;
+        if (e.type === 'motorcycle') {
+          // Bikes weave gently — a slow sinusoid added to their lane target,
+          // with a stiffer spring so they actually follow the wiggle.
+          const weave = Math.sin(performance.now() * 0.003 + e.weavePhase) * 9;
+          e.vx += ((e.laneX + weave) - e.x) * 1.1 * dt;
+        } else {
+          e.vx += (e.laneX - e.x) * 0.5 * dt;
+        }
       }
 
       // vx cap — bumped enemies allow stronger sideways speed
@@ -1753,18 +1760,21 @@ function update(dt) {
       }
     }
 
-    // Player collision — distinguish crash (head-on) from bump (side-swipe)
+    // Player collision — distinguish crash (head-on) from bump (side-swipe).
+    // Motorcycles are narrower than cars, so their crash + bump bands shrink.
     if (gameMode === 'playing' && player.alive && player.invincibleTimer <= 0 && e.state === 'alive' &&
         Math.abs(e.z - trackPos) < 25) {
       const dx = e.x - player.x;
       const absDx = Math.abs(dx);
+      const crashBand = e.type === 'motorcycle' ? 12 : 19;
+      const bumpBand  = e.type === 'motorcycle' ? 20 : 28;
 
-      if (absDx < 19) {
+      if (absDx < crashBand) {
         // CRASH — significant X overlap, we slammed into them
         triggerCrash(player.x);
         enemies.splice(i, 1);
         continue;
-      } else if (absDx < 28) {
+      } else if (absDx < bumpBand) {
         // SIDE-SWIPE BAND — bump territory. Check who's pushing into whom.
         const playerClosingVx = Math.sign(dx) * player.vx;   // positive if PLAYER moves toward enemy
         const enemyClosingVx = -Math.sign(dx) * e.vx;        // positive if ENEMY moves toward player
@@ -1828,11 +1838,27 @@ function update(dt) {
               }
             }
           } else if (e.faction === 'civilian') {
-            e.vx += bumpDir * bumpForce * 0.5;
-            player.x -= bumpDir * 3;
-            const contactX = (player.x + e.x) / 2;
-            explode(contactX, e.z, '#dddddd', 4);
-            e.laneX = e.x;
+            if (e.type === 'motorcycle') {
+              // Bikes go down hard on any contact — instant spin-out with a
+              // big lateral shove. No score penalty: it's still a civilian.
+              e.vx += bumpDir * bumpForce * 1.8;
+              player.x -= bumpDir * 3;
+              const contactX = (player.x + e.x) / 2;
+              sfxSlip();
+              explode(contactX, e.z, '#cc4422', 10);
+              e.state = 'spinning';
+              e.stateTime = 0;
+              e.spin = 0;
+              e.spinSpeed = bumpDir * (12 + Math.random() * 8);
+              const playerWorldSpeed = player.speed * player.maxSpeed;
+              e.vz = playerWorldSpeed * (0.30 + Math.random() * 0.15);
+            } else {
+              e.vx += bumpDir * bumpForce * 0.5;
+              player.x -= bumpDir * 3;
+              const contactX = (player.x + e.x) / 2;
+              explode(contactX, e.z, '#dddddd', 4);
+              e.laneX = e.x;
+            }
           }
         }
       }
@@ -2140,16 +2166,19 @@ function spawnCivilian() {
   const spawnZ = trackPos + PLAY_HEIGHT + 30;
   const hw = roadHalfWidthAt(spawnZ);
   const laneX = (Math.random() - 0.5) * (hw - 20) * 1.4;
-  const isTaxi = Math.random() < 0.35;
+  // Roll civilian type: ~25% motorcycle, ~25% taxi, ~50% sedan
+  const r = Math.random();
+  const type = r < 0.25 ? 'motorcycle' : r < 0.50 ? 'taxi' : 'sedan';
   const playerWorldSpeed = player.speed * player.maxSpeed;
-  // Civilians drive FORWARD (positive vz) at some fraction of typical traffic speed.
-  // Slower than the player → player gradually overtakes them.
-  // Taxis are a bit faster than sedans.
-  const speedFrac = isTaxi
-    ? 0.70 + Math.random() * 0.10        // taxi: 70-80% of player speed
-    : 0.50 + Math.random() * 0.15;       // sedan: 50-65% of player speed
+  // Civilians drive FORWARD (positive vz) at some fraction of typical traffic
+  // speed. Slower than the player → player gradually overtakes them.
+  // Speed by type: sedan slowest, taxi mid, motorcycle nippiest.
+  const speedFrac =
+    type === 'motorcycle' ? 0.72 + Math.random() * 0.10 :     // 72-82%
+    type === 'taxi'       ? 0.70 + Math.random() * 0.10 :     // 70-80%
+                            0.50 + Math.random() * 0.15;      // 50-65%
   enemies.push({
-    type: isTaxi ? 'taxi' : 'sedan',
+    type: type,
     faction: 'civilian',
     x: laneX,
     z: spawnZ,
@@ -2164,7 +2193,8 @@ function spawnCivilian() {
     targetTree: null,
     warningHits: 0,
     warningTimer: 0,
-    bumped: false
+    bumped: false,
+    weavePhase: Math.random() * Math.PI * 2,   // randomize so bikes don't sync
   });
 }
 
@@ -2644,6 +2674,57 @@ function drawTaxi(cx, cy, rotation, dinged) {
   ctx.restore();
 }
 
+function drawMotorcycle(cx, cy, rotation, dinged) {
+  const w = 14, h = 34;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(0.92, 0.92);
+  if (rotation) ctx.rotate(rotation);
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(-w/2 + 2, -h/2 + 3, w, h);
+  // Front wheel (toward top of sprite — bike faces away from viewer)
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(-3, -h/2 + 1, 6, 9);
+  ctx.fillStyle = '#444';
+  ctx.fillRect(-2, -h/2 + 2, 4, 7);
+  // Back wheel
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(-3, h/2 - 10, 6, 9);
+  ctx.fillStyle = '#444';
+  ctx.fillRect(-2, h/2 - 9, 4, 7);
+  // Frame body — red sport bike, or muted if dinged
+  ctx.fillStyle = dinged ? '#7c4f33' : '#c84422';
+  ctx.fillRect(-3, -h/2 + 9, 6, h - 18);
+  // Fuel tank highlight
+  ctx.fillStyle = dinged ? '#996644' : '#dd5533';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 4, 7, 0, 0, Math.PI*2);
+  ctx.fill();
+  // Rider jacket
+  ctx.fillStyle = dinged ? '#665544' : '#2a3a8a';
+  ctx.fillRect(-4, -5, 8, 10);
+  // Helmet
+  ctx.fillStyle = '#1a1a1a';
+  ctx.beginPath();
+  ctx.arc(0, -9, 4.5, 0, Math.PI*2);
+  ctx.fill();
+  // Helmet visor
+  ctx.fillStyle = '#88aacc';
+  ctx.fillRect(-3, -11, 6, 2);
+  // Handlebar grips (gloves)
+  ctx.fillStyle = '#222';
+  ctx.fillRect(-6, -5, 2, 3);
+  ctx.fillRect( 4, -5, 2, 3);
+  // Headlight (yellow front)
+  ctx.fillStyle = '#ffffaa';
+  ctx.fillRect(-2, -h/2, 4, 2);
+  // Taillight (red rear)
+  ctx.fillStyle = '#cc2222';
+  ctx.fillRect(-2, h/2 - 2, 4, 2);
+  ctx.restore();
+}
+
 function drawEnemy(e) {
   const sy = zToScreenY(e.z);
   if (sy < PLAY_TOP - 30 || sy > PLAY_BOTTOM + 10) return;
@@ -2662,6 +2743,7 @@ function drawEnemy(e) {
   }
   else if (e.type === 'sedan') drawSedan(sx, sy, rot, dinged);
   else if (e.type === 'taxi') drawTaxi(sx, sy, rot, dinged);
+  else if (e.type === 'motorcycle') drawMotorcycle(sx, sy, rot, dinged);
 
   // Smoke for spinning cars
   if (e.state === 'spinning' && Math.random() < 0.3) {
