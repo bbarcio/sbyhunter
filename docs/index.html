@@ -123,9 +123,8 @@ transition: transform 0.05s, filter 0.05s;
 #btn-oil { background: radial-gradient(circle at 30% 30%, rgba(120,120,140,0.7), rgba(20,20,30,0.6)); border: 2px solid rgba(150,150,180,0.8); }
 #btn-smoke { background: radial-gradient(circle at 30% 30%, rgba(180,200,220,0.7), rgba(80,100,130,0.5)); border: 2px solid rgba(200,220,240,0.8); }
 
-#btn-mute {
+#btn-music, #btn-sfx {
 position: absolute;
-top: calc(env(safe-area-inset-top, 12px) + 54px);
 right: 12px;
 width: 32px; height: 32px;
 border-radius: 50%;
@@ -134,7 +133,7 @@ color: #ffcc00;
 border: 1px solid rgba(255,204,0,0.5);
 font-family: 'Courier New', monospace;
 font-weight: bold;
-font-size: 14px;
+font-size: 13px;
 display: flex; align-items: center; justify-content: center;
 z-index: 25;
 user-select: none;
@@ -142,8 +141,10 @@ user-select: none;
 cursor: pointer;
 text-shadow: 0 0 4px #ffaa00;
 }
-#btn-mute.muted { color: #888; border-color: rgba(120,120,120,0.5); text-shadow: none; }
-#btn-mute:active { transform: scale(0.92); }
+#btn-music { top: calc(env(safe-area-inset-top, 12px) + 54px); }
+#btn-sfx   { top: calc(env(safe-area-inset-top, 12px) + 92px); font-size: 11px; }
+#btn-music.muted, #btn-sfx.muted { color: #888; border-color: rgba(120,120,120,0.5); text-shadow: none; }
+#btn-music:active, #btn-sfx:active { transform: scale(0.92); }
 
 #overlay {
 position: absolute; inset: 0;
@@ -232,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v3';
+    const CACHE='spyhunter-v4';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -299,7 +300,8 @@ if('serviceWorker' in navigator){
 <div id="btn-smoke" class="btn disabled">SMK</div>
 <div id="btn-oil" class="btn disabled">OIL</div>
 
-<div id="btn-mute" title="Sound on/off">♪</div>
+<div id="btn-music" title="Music on/off">♪</div>
+<div id="btn-sfx" title="SFX on/off">FX</div>
 
 <div id="overlay">
   <h1>SPY HUNTER</h1>
@@ -616,7 +618,10 @@ function findNearestTree(fromX, fromZ, side, maxDistZ) {
 // ============================================================
 const AUDIO = {
   ctx: null, master: null, musicGain: null, sfxGain: null,
-  muted: false, musicPlaying: false,
+  // Music and SFX are toggled independently. Music defaults OFF (the
+  // current loop felt too repetitive for sustained play); SFX defaults ON.
+  musicMuted: true, sfxMuted: false,
+  musicPlaying: false,
   musicNextNoteTime: 0, musicStep: 0, musicTimer: null,
   lastFireTime: 0,
   // iOS audio session: a silent <audio> element kept playing in the
@@ -625,6 +630,8 @@ const AUDIO = {
   // when the iPhone is in silent mode.
   silentEl: null, silentSrcUrl: null, sessionPrimed: false,
 };
+const MUSIC_GAIN = 0.45;
+const SFX_GAIN = 0.65;
 
 // Iconic Peter Gunn theme — 2-bar pattern, ~150 BPM, eighth notes.
 // Bass: classic ostinato (E E E E G E B♭ A) repeated.
@@ -670,17 +677,26 @@ function audioInit() {
   AUDIO.master = AUDIO.ctx.createGain();
   AUDIO.master.connect(AUDIO.ctx.destination);
   AUDIO.musicGain = AUDIO.ctx.createGain();
-  AUDIO.musicGain.gain.value = 0.45;
   AUDIO.musicGain.connect(AUDIO.master);
   AUDIO.sfxGain = AUDIO.ctx.createGain();
-  AUDIO.sfxGain.gain.value = 0.65;
   AUDIO.sfxGain.connect(AUDIO.master);
+  // Pull saved preferences (default: music off, sfx on)
   try {
-    if (localStorage.getItem('sbyhunter.muted') === '1') AUDIO.muted = true;
+    const m = localStorage.getItem('sbyhunter.musicMuted');
+    const s = localStorage.getItem('sbyhunter.sfxMuted');
+    if (m !== null) AUDIO.musicMuted = (m === '1');
+    if (s !== null) AUDIO.sfxMuted = (s === '1');
   } catch(e) {}
-  AUDIO.master.gain.value = AUDIO.muted ? 0 : 1;
-  const btn = document.getElementById('btn-mute');
-  if (btn) btn.classList.toggle('muted', AUDIO.muted);
+  AUDIO.musicGain.gain.value = AUDIO.musicMuted ? 0 : MUSIC_GAIN;
+  AUDIO.sfxGain.gain.value = AUDIO.sfxMuted ? 0 : SFX_GAIN;
+  refreshAudioBtns();
+}
+
+function refreshAudioBtns() {
+  const mBtn = document.getElementById('btn-music');
+  const sBtn = document.getElementById('btn-sfx');
+  if (mBtn) mBtn.classList.toggle('muted', AUDIO.musicMuted);
+  if (sBtn) sBtn.classList.toggle('muted', AUDIO.sfxMuted);
 }
 
 function audioResume() {
@@ -746,16 +762,24 @@ function iosAudioSessionPrime() {
   } catch(e) {}
 }
 
-function audioSetMuted(m) {
-  AUDIO.muted = m;
-  if (AUDIO.master) AUDIO.master.gain.value = m ? 0 : 1;
-  try { localStorage.setItem('sbyhunter.muted', m ? '1' : '0'); } catch(e) {}
-  const btn = document.getElementById('btn-mute');
-  if (btn) btn.classList.toggle('muted', m);
+function audioSetMusicMuted(m) {
+  AUDIO.musicMuted = m;
+  if (AUDIO.musicGain) AUDIO.musicGain.gain.value = m ? 0 : MUSIC_GAIN;
+  try { localStorage.setItem('sbyhunter.musicMuted', m ? '1' : '0'); } catch(e) {}
+  refreshAudioBtns();
+  if (m) musicStop();
+  else if (state === 'playing') musicStart();
+}
+
+function audioSetSfxMuted(m) {
+  AUDIO.sfxMuted = m;
+  if (AUDIO.sfxGain) AUDIO.sfxGain.gain.value = m ? 0 : SFX_GAIN;
+  try { localStorage.setItem('sbyhunter.sfxMuted', m ? '1' : '0'); } catch(e) {}
+  refreshAudioBtns();
 }
 
 function musicStart() {
-  if (!AUDIO.ctx || AUDIO.musicPlaying) return;
+  if (!AUDIO.ctx || AUDIO.musicPlaying || AUDIO.musicMuted) return;
   AUDIO.musicPlaying = true;
   AUDIO.musicStep = 0;
   AUDIO.musicNextNoteTime = AUDIO.ctx.currentTime + 0.08;
@@ -1003,18 +1027,68 @@ function sfxPickup() {
   osc.start(t); osc.stop(t + 0.24);
 }
 
-// Mute button wiring + global gesture-to-resume
+function sfxTreeCrash() {
+  if (!AUDIO.ctx) return;
+  const c = AUDIO.ctx, t = c.currentTime;
+  // Woody crack — bandpass-filtered noise burst
+  const n = c.createBufferSource();
+  n.buffer = noiseBuf(0.28);
+  const bp = c.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = 420;
+  bp.Q.value = 2.5;
+  const ng = c.createGain();
+  ng.gain.setValueAtTime(0.55, t);
+  ng.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+  n.connect(bp); bp.connect(ng); ng.connect(AUDIO.sfxGain);
+  n.start(t); n.stop(t + 0.28);
+  // Low thump for the body of the impact
+  const osc = c.createOscillator();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(110, t);
+  osc.frequency.exponentialRampToValueAtTime(50, t + 0.13);
+  const og = c.createGain();
+  og.gain.setValueAtTime(0.4, t);
+  og.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+  osc.connect(og); og.connect(AUDIO.sfxGain);
+  osc.start(t); osc.stop(t + 0.17);
+}
+
+function sfxSlip() {
+  if (!AUDIO.ctx) return;
+  const c = AUDIO.ctx, t = c.currentTime;
+  const dur = 0.45;
+  // Tire screech — bandpass-filtered noise with a downward sweep
+  const n = c.createBufferSource();
+  n.buffer = noiseBuf(dur);
+  const bp = c.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.setValueAtTime(3000, t);
+  bp.frequency.exponentialRampToValueAtTime(700, t + dur);
+  bp.Q.value = 5;
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.5, t);
+  g.gain.linearRampToValueAtTime(0.4, t + 0.1);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  n.connect(bp); bp.connect(g); g.connect(AUDIO.sfxGain);
+  n.start(t); n.stop(t + dur);
+}
+
+// Audio button wiring + global gesture-to-resume
 (function() {
-  const btn = document.getElementById('btn-mute');
-  if (btn) {
+  const wireToggle = (id, getter, setter) => {
+    const el = document.getElementById(id);
+    if (!el) return;
     const toggle = e => {
       if (e) e.preventDefault();
       audioResume();
-      audioSetMuted(!AUDIO.muted);
+      setter(!getter());
     };
-    btn.addEventListener('click', toggle);
-    btn.addEventListener('touchstart', toggle, { passive: false });
-  }
+    el.addEventListener('click', toggle);
+    el.addEventListener('touchstart', toggle, { passive: false });
+  };
+  wireToggle('btn-music', () => AUDIO.musicMuted, audioSetMusicMuted);
+  wireToggle('btn-sfx',   () => AUDIO.sfxMuted,   audioSetSfxMuted);
   // Resume audio on first interaction anywhere (iOS gesture requirement)
   const wake = () => { audioResume(); };
   document.addEventListener('touchstart', wake, { once: true, passive: true });
@@ -1467,6 +1541,7 @@ function update(dt) {
         for (const tr of trees) {
           const treeScreenX = tr.x - ROAD.centerX;
           if (Math.abs(e.x - treeScreenX) < 12 * tr.size && Math.abs(e.z - tr.z) < 14) {
+            sfxTreeCrash();
             explode(e.x, e.z, '#ff8800', 22);
             player.score += e.bulletproof ? 500 : 300;
             enemies.splice(i, 1);
@@ -1557,6 +1632,7 @@ function update(dt) {
         for (const tr of trees) {
           const treeScreenX = tr.x - ROAD.centerX;
           if (Math.abs(e.x - treeScreenX) < 12 * tr.size && Math.abs(e.z - tr.z) < 14) {
+            sfxTreeCrash();
             explode(e.x, e.z, '#ff8800', 22);
             player.score += 300;
             enemies.splice(i, 1);
@@ -1776,6 +1852,7 @@ function update(dt) {
       if (Math.abs(t.z - trackPos) < 20) {
         const dx = Math.abs(t.x - playerScreenX);
         if (dx < 12 * t.size) {
+          sfxTreeCrash();
           triggerCrash(player.x);
           break;
         }
@@ -1884,6 +1961,7 @@ function updateOilSlicks(dt) {
       if (s._hitEnemies.has(e)) continue;
       if (Math.abs(e.z - s.z) < 14 && Math.abs(e.x - s.x) < 16) {
         s._hitEnemies.add(e);
+        sfxSlip();
         e.state = 'spinning';
         e.stateTime = 0;
         e.spin = 0;
