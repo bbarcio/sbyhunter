@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v7';
+    const CACHE='spyhunter-v8';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -1098,6 +1098,132 @@ function sfxSlip() {
   n.start(t); n.stop(t + dur);
 }
 
+// ============================================================
+// Engine audio — continuous voices for the player car and the
+// few nearest enemy cars. Routes through sfxGain so the FX toggle
+// mutes engines along with discrete sound effects.
+// ============================================================
+const ENGINE = {
+  active: false,
+  player: null,                 // { osc1, osc2, subGain, filter, gain }
+  enemySlots: [],               // pool of voices reassigned each frame
+  MAX_ENEMY_VOICES: 3,
+};
+
+function engineStart() {
+  if (!AUDIO.ctx || ENGINE.active) return;
+  const c = AUDIO.ctx;
+  // --- Player engine ---
+  const filt = c.createBiquadFilter();
+  filt.type = 'lowpass';
+  filt.frequency.value = 700;
+  filt.Q.value = 1.2;
+  const out = c.createGain();
+  out.gain.value = 0;            // start silent, ramps in via engineUpdate
+  filt.connect(out);
+  out.connect(AUDIO.sfxGain);
+  const osc1 = c.createOscillator();
+  osc1.type = 'sawtooth';
+  osc1.frequency.value = 90;
+  osc1.connect(filt);
+  const osc2 = c.createOscillator();
+  osc2.type = 'square';
+  osc2.frequency.value = 45;
+  const subGain = c.createGain();
+  subGain.gain.value = 0.35;
+  osc2.connect(subGain);
+  subGain.connect(filt);
+  try { osc1.start(); osc2.start(); } catch(e) {}
+  ENGINE.player = { osc1, osc2, subGain, filter: filt, gain: out };
+
+  // --- Enemy engine voices (pooled, reassigned per frame) ---
+  ENGINE.enemySlots = [];
+  for (let i = 0; i < ENGINE.MAX_ENEMY_VOICES; i++) {
+    const f = c.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = 500;
+    f.Q.value = 0.7;
+    const g = c.createGain();
+    g.gain.value = 0;
+    let panner = null;
+    try { panner = c.createStereoPanner(); } catch(e) {}
+    if (panner) { f.connect(g); g.connect(panner); panner.connect(AUDIO.sfxGain); }
+    else { f.connect(g); g.connect(AUDIO.sfxGain); }
+    const o = c.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.value = 80;
+    o.connect(f);
+    try { o.start(); } catch(e) {}
+    ENGINE.enemySlots.push({ osc: o, gain: g, panner: panner });
+  }
+
+  ENGINE.active = true;
+}
+
+function engineStop() {
+  if (!ENGINE.active) return;
+  const stopNow = node => { try { node.stop(); } catch(e) {} };
+  if (ENGINE.player) {
+    stopNow(ENGINE.player.osc1);
+    stopNow(ENGINE.player.osc2);
+  }
+  ENGINE.enemySlots.forEach(v => stopNow(v.osc));
+  ENGINE.player = null;
+  ENGINE.enemySlots = [];
+  ENGINE.active = false;
+}
+
+function engineUpdate(dt) {
+  if (!ENGINE.active || !AUDIO.ctx) return;
+  const t = AUDIO.ctx.currentTime;
+  const playerOn = (gameMode === 'playing' || gameMode === 'awaiting_truck') && player.alive;
+
+  // --- Player engine ---
+  if (ENGINE.player) {
+    // Map player.speed (0..1) to base frequency 70..280 Hz so idle is a low
+    // rumble and full throttle is a more urgent purr.
+    const base = 70 + Math.max(0, Math.min(1, player.speed)) * 210;
+    ENGINE.player.osc1.frequency.setTargetAtTime(base, t, 0.08);
+    ENGINE.player.osc2.frequency.setTargetAtTime(base * 0.5, t, 0.08);
+    ENGINE.player.filter.frequency.setTargetAtTime(500 + player.speed * 1400, t, 0.08);
+    const targetGain = playerOn ? 0.16 : 0;
+    ENGINE.player.gain.gain.setTargetAtTime(targetGain, t, 0.12);
+  }
+
+  // --- Enemy engine voices: pick the closest alive enemies ---
+  // Cheap proximity score: lateral + half-weighted Z distance.
+  const cand = [];
+  for (const e of enemies) {
+    if (e.state !== 'alive') continue;
+    const dz = Math.abs(e.z - trackPos);
+    const dx = Math.abs(e.x - player.x);
+    const d  = dx + dz * 0.6;
+    if (d > 130) continue;
+    cand.push({ e, d });
+  }
+  cand.sort((a, b) => a.d - b.d);
+  cand.length = Math.min(cand.length, ENGINE.MAX_ENEMY_VOICES);
+
+  for (let i = 0; i < ENGINE.enemySlots.length; i++) {
+    const slot = ENGINE.enemySlots[i];
+    const c0 = cand[i];
+    if (c0 && playerOn) {
+      const e = c0.e;
+      const vzNorm = Math.max(0, Math.min(1, e.vz / Math.max(80, player.maxSpeed)));
+      const freq = 65 + vzNorm * 170;
+      slot.osc.frequency.setTargetAtTime(freq, t, 0.12);
+      if (slot.panner) {
+        const pan = Math.max(-1, Math.min(1, (e.x - player.x) / 80));
+        slot.panner.pan.setTargetAtTime(pan, t, 0.12);
+      }
+      const vol = Math.max(0, 1 - c0.d / 130) * 0.07;
+      slot.gain.gain.setTargetAtTime(vol, t, 0.18);
+    } else {
+      slot.gain.gain.setTargetAtTime(0, t, 0.18);
+    }
+  }
+}
+
 // Audio button wiring + global gesture-to-resume
 (function() {
   const wireToggle = (id, getter, setter) => {
@@ -1254,12 +1380,14 @@ function startGame() {
   overlay.classList.add('hidden');
   audioResume();
   musicStart();
+  engineStart();
 }
 
 function endGame() {
   state = 'gameover';
   gameMode = 'gameover';
   musicStop();
+  engineStop();
   sfxExplode(true);
   document.querySelector('#overlay h1').textContent = 'GAME OVER';
   document.querySelector('#overlay h2').textContent = `SCORE: ${String(player.score).padStart(6, '0')}`;
@@ -1986,6 +2114,7 @@ function update(dt) {
   updateTruck(dt);
   updateWeaponsVans(dt);
   updateOilSlicks(dt);
+  engineUpdate(dt);
 
   // === Weapons van spawn timer ===
   if (gameMode === 'playing' && currentLevel >= 2 && weaponsVans.length === 0) {
