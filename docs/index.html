@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v6';
+    const CACHE='spyhunter-v7';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -1422,6 +1422,11 @@ function update(dt) {
     showLevelBanner('LEVEL ' + currentLevel);
     document.getElementById('level').textContent = String(currentLevel);
     sfxLevelUp();
+    // Tee up an Enforcer to appear shortly into every Lvl 3+ stretch so
+    // the player is guaranteed to see the new threat right away.
+    if (levelConfig(currentLevel).enforcerUnlocked) {
+      enforcerSpawnTimer = 4 + Math.random() * 3;
+    }
   }
 
   if (levelBannerTimer > 0) {
@@ -1603,8 +1608,8 @@ function update(dt) {
           // Bikes weave noticeably — bigger amplitude and faster period than
           // the original gentle version. Per-bike random phase keeps them
           // out of sync.
-          const weave = Math.sin(performance.now() * 0.005 + e.weavePhase) * 18;
-          e.vx += ((e.laneX + weave) - e.x) * 1.4 * dt;
+          const weave = Math.sin(performance.now() * 0.006 + e.weavePhase) * 26;
+          e.vx += ((e.laneX + weave) - e.x) * 1.6 * dt;
         } else {
           e.vx += (e.laneX - e.x) * 0.5 * dt;
         }
@@ -1798,21 +1803,23 @@ function update(dt) {
               player.score += 50;
             }
           } else if (e.faction === 'civilian') {
-            // CIVILIAN — takes 3 hits within a window
-            if (e.warningHits === 0) {
-              // First hit: white spark, no penalty, slight wobble
+            // CIVILIAN — motorcycles take 2 hits (more fragile rider),
+            // cars take 3. Either way, killing one costs score.
+            const killOnHit = e.type === 'motorcycle' ? 2 : 3;
+            if (e.warningHits === 0 && killOnHit > 1) {
+              // First hit: warning, no penalty, slight wobble
               e.warningHits = 1;
               e.warningTimer = 2.5;
               explode(b.x, b.z, '#ffffff', 8);
               e.vx += (Math.random() - 0.5) * 20;
-            } else if (e.warningHits === 1) {
-              // Second hit: orange spark — escalating warning, no penalty yet
+            } else if (e.warningHits === 1 && killOnHit > 2) {
+              // Second hit (cars only): escalating warning, still no penalty
               e.warningHits = 2;
               e.warningTimer = 2.5;
               explode(b.x, b.z, '#ff9933', 10);
               e.vx += (Math.random() - 0.5) * 30;
             } else {
-              // Third hit: full penalty
+              // Final hit — penalty + spin-out
               sfxCivilianWarn();
               explode(b.x, b.z, '#ffcc66', 12);
               e.state = 'spinning';
@@ -1825,7 +1832,7 @@ function update(dt) {
               e.vz = playerWorldSpeed * (0.35 + Math.random() * 0.10);
               e.targetTree = null;
               player.score = Math.max(0, player.score - 500);
-              showWarning('CIVILIAN HIT');
+              showWarning(e.type === 'motorcycle' ? 'RIDER DOWN' : 'CIVILIAN HIT');
             }
           }
           break;
@@ -2255,17 +2262,20 @@ function fireEnemyBullet(e) {
 // missiles. Pulls alongside the player at matched speed, fires bullets every
 // ~1 second for several seconds, then accelerates away.
 function spawnEnforcer() {
-  const spawnZ = trackPos + PLAY_HEIGHT + 40;
+  // Spawn within the visible play area so the player actually sees the
+  // limo arrive — far enough ahead to telegraph it, close enough that the
+  // approach phase is short.
+  const spawnZ = trackPos + Math.floor(PLAY_HEIGHT * 0.55);
   const side = Math.random() < 0.5 ? -1 : 1;        // approach from L or R
   const offset = 42;                                 // lateral pacing offset
-  const playerWorldSpeed = player.speed * player.maxSpeed;
+  const playerWorldSpeed = Math.max(player.speed * player.maxSpeed, 120);
   enemies.push({
     type: 'enforcer',
     faction: 'enemy',
     x: side * (offset + 8),
     z: spawnZ,
     vx: 0,
-    vz: playerWorldSpeed * 0.88,                     // slower at first so player catches up
+    vz: playerWorldSpeed * 0.92,                     // slightly slower so player catches up quickly
     hp: 999, maxHp: 999,
     state: 'alive',
     stateTime: 0,
@@ -2278,7 +2288,7 @@ function spawnEnforcer() {
     offRoadTimer: 0,
     aiState: 'enforcer',
     aiTimer: 9999,                                   // never cycles
-    targetSpeedRatio: 0.88,
+    targetSpeedRatio: 0.92,
     // Enforcer-specific state
     enforcerSide: side,
     enforcerOffset: offset,
