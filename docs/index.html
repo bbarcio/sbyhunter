@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v12';
+    const CACHE='spyhunter-v13';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -706,11 +706,30 @@ function refreshAudioBtns() {
 
 function audioResume() {
   audioInit();
-  if (AUDIO.ctx && AUDIO.ctx.state === 'suspended') {
-    const p = AUDIO.ctx.resume();
-    if (p && p.catch) p.catch(() => {});
-  }
+  if (!AUDIO.ctx) return Promise.resolve();
   iosAudioSessionPrime();
+  audioForceWake();
+  if (AUDIO.ctx.state === 'suspended') {
+    const p = AUDIO.ctx.resume();
+    if (p && p.then) return p.catch(() => {});
+  }
+  return Promise.resolve();
+}
+
+// Plays a 1-sample silent buffer through ctx.destination. This is the
+// canonical iOS Web Audio unlock trick — it spins up the audio output
+// driver so subsequent oscillator schedules actually produce sound right
+// away (otherwise you can sit through several silent oscillators before
+// iOS decides the audio path is live).
+function audioForceWake() {
+  if (!AUDIO.ctx) return;
+  try {
+    const buf = AUDIO.ctx.createBuffer(1, 1, AUDIO.ctx.sampleRate);
+    const src = AUDIO.ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(AUDIO.ctx.destination);
+    src.start(0);
+  } catch(e) {}
 }
 
 // Build a ~0.5 second silent WAV as a Blob URL. Needs real duration so iOS
@@ -1668,9 +1687,14 @@ function startGame() {
   gameMode = 'playing';
   state = 'playing';
   overlay.classList.add('hidden');
-  audioResume();
-  musicStart();
-  engineStart();
+  // Wait until iOS finishes unsuspending the AudioContext before kicking off
+  // the continuous engine + music. Without this, those voices are scheduled
+  // against a still-suspended context and produce no audible output until
+  // some other event (like an SFX hit) nudges the audio pipeline awake.
+  audioResume().then(() => {
+    musicStart();
+    engineStart();
+  });
 }
 
 function endGame() {
