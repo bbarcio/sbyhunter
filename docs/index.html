@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v8';
+    const CACHE='spyhunter-v9';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -975,6 +975,73 @@ function sfxExplode(big) {
   n.start(t); n.stop(t + dur);
 }
 
+// The player-totaled-by-crash sound. Four layers stacked across ~1 sec:
+//   1. Sub thump on impact (low-frequency punch you feel)
+//   2. Bandpass-noise metal/glass crunch
+//   3. Lowpass-sweeping noise boom (the main explosion body)
+//   4. Detuned square-wave metallic ring tail (the squeal of bent steel)
+function sfxCarCrash() {
+  if (!AUDIO.ctx) return;
+  const c = AUDIO.ctx, t = c.currentTime;
+
+  // 1. Heavy impact thump
+  const thump = c.createOscillator();
+  thump.type = 'sine';
+  thump.frequency.setValueAtTime(140, t);
+  thump.frequency.exponentialRampToValueAtTime(28, t + 0.22);
+  const thumpG = c.createGain();
+  thumpG.gain.setValueAtTime(0.7, t);
+  thumpG.gain.exponentialRampToValueAtTime(0.001, t + 0.26);
+  thump.connect(thumpG); thumpG.connect(AUDIO.sfxGain);
+  thump.start(t); thump.stop(t + 0.28);
+
+  // 2. Metallic crunch
+  const crunch = c.createBufferSource();
+  crunch.buffer = noiseBuf(0.4);
+  const crunchBp = c.createBiquadFilter();
+  crunchBp.type = 'bandpass';
+  crunchBp.frequency.value = 1300;
+  crunchBp.Q.value = 2.5;
+  const crunchG = c.createGain();
+  crunchG.gain.setValueAtTime(0.55, t);
+  crunchG.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+  crunch.connect(crunchBp); crunchBp.connect(crunchG); crunchG.connect(AUDIO.sfxGain);
+  crunch.start(t); crunch.stop(t + 0.4);
+
+  // 3. Big boom
+  const boom = c.createBufferSource();
+  boom.buffer = noiseBuf(1.0);
+  const boomLp = c.createBiquadFilter();
+  boomLp.type = 'lowpass';
+  boomLp.frequency.setValueAtTime(2800, t);
+  boomLp.frequency.exponentialRampToValueAtTime(160, t + 1.0);
+  const boomG = c.createGain();
+  boomG.gain.setValueAtTime(0, t);
+  boomG.gain.linearRampToValueAtTime(0.7, t + 0.05);
+  boomG.gain.exponentialRampToValueAtTime(0.001, t + 1.0);
+  boom.connect(boomLp); boomLp.connect(boomG); boomG.connect(AUDIO.sfxGain);
+  boom.start(t + 0.02); boom.stop(t + 1.02);
+
+  // 4. Twisted-metal ring tail (two detuned squares through a lowpass)
+  const ringFilt = c.createBiquadFilter();
+  ringFilt.type = 'lowpass';
+  ringFilt.frequency.value = 900;
+  const ringG = c.createGain();
+  ringG.gain.setValueAtTime(0, t);
+  ringG.gain.linearRampToValueAtTime(0.16, t + 0.18);
+  ringG.gain.exponentialRampToValueAtTime(0.001, t + 1.0);
+  ringFilt.connect(ringG); ringG.connect(AUDIO.sfxGain);
+  for (const detune of [0, 11]) {
+    const r = c.createOscillator();
+    r.type = 'square';
+    r.frequency.setValueAtTime(290, t + 0.1);
+    r.frequency.exponentialRampToValueAtTime(170, t + 0.95);
+    r.detune.value = detune;
+    r.connect(ringFilt);
+    r.start(t + 0.1); r.stop(t + 1.0);
+  }
+}
+
 function sfxOilDrop() {
   if (!AUDIO.ctx) return;
   const c = AUDIO.ctx, t = c.currentTime;
@@ -1417,7 +1484,7 @@ function showLevelBanner(msg) {
 function triggerCrash(crashX) {
   if (gameMode !== 'playing') return;
   player.lives -= 1;
-  sfxExplode(false);
+  sfxCarCrash();
   explode(crashX, trackPos, '#ff3333', 20);
   wrecks.push({
     x: crashX, z: trackPos,
