@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v5';
+    const CACHE='spyhunter-v6';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -311,6 +311,8 @@ if('serviceWorker' in navigator){
     Shoot <span class="warn">BLUE</span> Switchblades. <span class="key">BUMP</span> into trees for bonus.<br>
     <span class="warn">OLIVE</span> Bulletproof cars (Lvl 2+): bullets bounce —<br>
     bump them off the road to kill!<br>
+    <span class="warn">BLACK</span> Enforcer limo (Lvl 3+): shoots sideways at you —<br>
+    bump it off the road or oil-slick it!<br>
     Catch the gray <span class="key">WEAPONS VAN</span> from behind to upgrade.<br>
     Drop <span class="key">OIL</span> behind you to spin out chasers!<br>
     <span class="warn">DO NOT</span> shoot civilians.
@@ -934,6 +936,28 @@ function sfxFire() {
   n.start(t); n.stop(t + 0.06);
 }
 
+function sfxEnemyFire() {
+  if (!AUDIO.ctx) return;
+  const c = AUDIO.ctx, t = c.currentTime;
+  // Sharper, lower-pitched than the player gun — punchier handgun crack
+  const osc = c.createOscillator();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(380, t);
+  osc.frequency.exponentialRampToValueAtTime(90, t + 0.08);
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.22, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+  osc.connect(g); g.connect(AUDIO.sfxGain);
+  osc.start(t); osc.stop(t + 0.11);
+  const n = c.createBufferSource();
+  n.buffer = noiseBuf(0.08);
+  const ng = c.createGain();
+  ng.gain.setValueAtTime(0.18, t);
+  ng.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+  n.connect(ng); ng.connect(AUDIO.sfxGain);
+  n.start(t); n.stop(t + 0.08);
+}
+
 function sfxExplode(big) {
   if (!AUDIO.ctx) return;
   const c = AUDIO.ctx, t = c.currentTime;
@@ -1131,10 +1155,12 @@ function getPlayerScreenY() {
 // ENTITIES
 // ============================================================
 const bullets = [];
+const enemyBullets = [];   // lateral bullets fired by Enforcer thugs
 const enemies = [];
 const particles = [];
 
 let fireCooldown = 0;
+let enforcerSpawnTimer = 22;   // Level 3+: time until next Enforcer arrives
 let enemySpawnTimer = 3;
 let civilianSpawnTimer = 4;
 let trackPos = 0;
@@ -1176,6 +1202,9 @@ function levelConfig(lvl) {
   return {
     bulletproofUnlocked: lvl >= 2,
     bulletproofChance: lvl >= 2 ? Math.min(0.30, 0.10 + (lvl - 2) * 0.06) : 0,
+    enforcerUnlocked: lvl >= 3,
+    // Time between enforcer attacks (shorter at higher levels)
+    enforcerInterval: Math.max(14, 28 - (lvl - 3) * 2),
     enemySpawnMin: Math.max(1.0, 2.2 - (lvl - 1) * 0.15),
     enemySpawnRange: Math.max(0.8, 1.8 - (lvl - 1) * 0.12)
   };
@@ -1197,6 +1226,7 @@ function startGame() {
   player.ammo.oil = 0;
   player.ammo.smoke = 0;
   bullets.length = 0;
+  enemyBullets.length = 0;
   enemies.length = 0;
   particles.length = 0;
   wrecks.length = 0;
@@ -1206,6 +1236,7 @@ function startGame() {
   fireCooldown = 0;
   enemySpawnTimer = 3;
   civilianSpawnTimer = 4;
+  enforcerSpawnTimer = 22;
   ROAD.widthEvents = [];
   ROAD._nextEventZ = 500;
   truck = null;
@@ -1278,6 +1309,7 @@ function triggerCrash(crashX) {
   for (let i = enemies.length - 1; i >= 0; i--) {
     if (Math.abs(enemies[i].z - trackPos) < 120) enemies.splice(i, 1);
   }
+  enemyBullets.length = 0;
 }
 
 function spawnTruck() {
@@ -1412,6 +1444,25 @@ function update(dt) {
     if (b.z - trackPos > PLAY_HEIGHT + 50) bullets.splice(i, 1);
   }
 
+  // Enemy bullets — fired by Enforcer thugs. Travel diagonally toward
+  // wherever the player was when they were fired.
+  for (let i = enemyBullets.length - 1; i >= 0; i--) {
+    const b = enemyBullets[i];
+    b.x += b.vx * dt;
+    b.z += b.vz * dt;
+    b.life -= dt;
+    if (b.life <= 0 || b.z < trackPos - 60 || b.z > trackPos + PLAY_HEIGHT + 50) {
+      enemyBullets.splice(i, 1);
+      continue;
+    }
+    // Hit the player
+    if (gameMode === 'playing' && player.alive && player.invincibleTimer <= 0 &&
+        Math.abs(b.z - trackPos) < 10 && Math.abs(b.x - player.x) < 12) {
+      enemyBullets.splice(i, 1);
+      triggerCrash(player.x);
+    }
+  }
+
   // Spawning — level-aware
   if (gameMode === 'playing') {
     const cfg = levelConfig(currentLevel);
@@ -1438,6 +1489,20 @@ function update(dt) {
         civilianSpawnTimer = 0.4;
       }
     }
+    // Enforcer — periodic special-event spawn at Lvl 3+
+    if (cfg.enforcerUnlocked) {
+      enforcerSpawnTimer -= dt;
+      if (enforcerSpawnTimer <= 0) {
+        // Don't pile on if an Enforcer is already in play
+        const hasEnforcer = enemies.some(e => e.type === 'enforcer');
+        if (!hasEnforcer && canSpawnAtFront()) {
+          spawnEnforcer();
+          enforcerSpawnTimer = cfg.enforcerInterval + Math.random() * 6;
+        } else {
+          enforcerSpawnTimer = 1.5;
+        }
+      }
+    }
   }
 
   // Cars
@@ -1447,9 +1512,15 @@ function update(dt) {
     if (e.state === 'alive') {
       const speedWorldRef = player.speed * player.maxSpeed;
 
+      // --- Enforcer AI runs its own state machine, bypassing the regular
+      // Switchblade/Bulletproof cycling logic. ---
+      if (e.type === 'enforcer' && !e.bumped) {
+        updateEnforcer(e, dt, speedWorldRef);
+      }
+
       // --- Variable Z (vertical) behavior for Switchblades ---
       // POSITIVE vz means driving forward (same direction as player).
-      if (e.faction === 'enemy' && !e.bumped) {
+      if (e.faction === 'enemy' && !e.bumped && e.type !== 'enforcer') {
         // === Rear-attack transition ===
         // Once passed by the player (now behind), some enemies switch to 'chaser' state
         // and accelerate to catch up. This justifies oil slicks / smoke screen later.
@@ -1502,7 +1573,8 @@ function update(dt) {
       }
 
       // --- Lateral behavior by faction & AI state ---
-      if (e.faction === 'enemy' && !e.bumped && gameMode === 'playing') {
+      // (Enforcer manages its own lateral motion in updateEnforcer.)
+      if (e.faction === 'enemy' && !e.bumped && e.type !== 'enforcer' && gameMode === 'playing') {
         if (e.aiState === 'stalker') {
           // Gentle drift toward player's X column
           e.vx += Math.sign(player.x - e.x) * 12 * dt;
@@ -1528,10 +1600,11 @@ function update(dt) {
         }
       } else if (e.faction === 'civilian') {
         if (e.type === 'motorcycle') {
-          // Bikes weave gently — a slow sinusoid added to their lane target,
-          // with a stiffer spring so they actually follow the wiggle.
-          const weave = Math.sin(performance.now() * 0.003 + e.weavePhase) * 9;
-          e.vx += ((e.laneX + weave) - e.x) * 1.1 * dt;
+          // Bikes weave noticeably — bigger amplitude and faster period than
+          // the original gentle version. Per-bike random phase keeps them
+          // out of sync.
+          const weave = Math.sin(performance.now() * 0.005 + e.weavePhase) * 18;
+          e.vx += ((e.laneX + weave) - e.x) * 1.4 * dt;
         } else {
           e.vx += (e.laneX - e.x) * 0.5 * dt;
         }
@@ -1550,7 +1623,7 @@ function update(dt) {
           if (Math.abs(e.x - treeScreenX) < 12 * tr.size && Math.abs(e.z - tr.z) < 14) {
             sfxTreeCrash();
             explode(e.x, e.z, '#ff8800', 22);
-            player.score += e.bulletproof ? 500 : 300;
+            player.score += e.type === 'enforcer' ? 800 : (e.bulletproof ? 500 : 300);
             enemies.splice(i, 1);
             killedByTree = true;
             break;
@@ -1579,7 +1652,7 @@ function update(dt) {
             }
             if (e.offRoadTimer > 0.5) {
               explode(e.x, e.z, '#ff8800', 22);
-              player.score += 500;
+              player.score += e.type === 'enforcer' ? 800 : 500;
               enemies.splice(i, 1);
               continue;
             }
@@ -2100,6 +2173,121 @@ function canSpawnAtFront() {
   return true;
 }
 
+function updateEnforcer(e, dt, speedWorldRef) {
+  const dz = e.z - trackPos;
+  e.enforcerPhaseTimer += dt;
+
+  if (e.enforcerPhase === 'approach') {
+    // Drive slightly slower than player while player catches up. Hold the
+    // approach lateral offset (just outside the pacing position).
+    e.targetSpeedRatio = 0.92;
+    const approachX = e.enforcerSide * (e.enforcerOffset + 8);
+    e.vx += (approachX - e.x) * 1.2 * dt;
+    if (Math.abs(dz) < 24) {
+      e.enforcerPhase = 'pace';
+      e.enforcerPhaseTimer = 0;
+      e.enforcerFireCooldown = 0.6;
+    }
+  } else if (e.enforcerPhase === 'pace') {
+    // Match player's world speed exactly, hold lateral offset *relative to
+    // player* so the limo tracks the player's steering.
+    e.targetSpeedRatio = 1.0;
+    const targetX = player.x + e.enforcerSide * e.enforcerOffset;
+    e.vx += (targetX - e.x) * 1.6 * dt;
+    // Fire lateral bullets
+    e.enforcerFireCooldown -= dt;
+    if (e.enforcerFireCooldown <= 0 && player.alive && gameMode === 'playing') {
+      fireEnemyBullet(e);
+      e.enforcerFireCooldown = 1.0 + Math.random() * 0.5;
+    }
+    // After several seconds of pacing, peel away
+    if (e.enforcerPhaseTimer > 6.0) {
+      e.enforcerPhase = 'retreat';
+      e.enforcerPhaseTimer = 0;
+    }
+  } else if (e.enforcerPhase === 'retreat') {
+    // Accelerate ahead and drift back toward the road shoulder
+    e.targetSpeedRatio = 1.18;
+    const retreatX = e.enforcerSide * (e.enforcerOffset + 16);
+    e.vx += (retreatX - e.x) * 0.6 * dt;
+  }
+
+  // Apply target Z velocity smoothly (similar to other enemies)
+  const targetVz = speedWorldRef * e.targetSpeedRatio;
+  e.vz += (targetVz - e.vz) * Math.min(1, dt * 3.0);
+  // vx cap — limo is heavy
+  e.vx = Math.max(-160, Math.min(160, e.vx));
+}
+
+function fireEnemyBullet(e) {
+  // Fire from the side of the limo facing the player. Aim toward the
+  // player's current position with a fixed travel speed.
+  const fromX = e.x - e.enforcerSide * 10;        // muzzle on inboard side
+  const fromZ = e.z;
+  const dx = player.x - fromX;
+  const dz = trackPos - fromZ;
+  const len = Math.hypot(dx, dz) || 1;
+  const speed = 320;
+  enemyBullets.push({
+    x: fromX, z: fromZ,
+    vx: (dx / len) * speed,
+    vz: (dz / len) * speed,
+    life: 1.6,
+  });
+  // Muzzle flash
+  for (let k = 0; k < 4; k++) {
+    particles.push({
+      x: fromX + (Math.random() - 0.5) * 4,
+      z: fromZ,
+      vx: -e.enforcerSide * (40 + Math.random() * 60),
+      vz: (Math.random() - 0.5) * 30,
+      life: 0.2,
+      color: '#ffcc66'
+    });
+  }
+  sfxEnemyFire();
+}
+
+// === Enforcer ===
+// A black limousine with a thug in the back window shooting laterally at the
+// player. Bulletproof to gunfire; the only counters are bumping it off the
+// road (like a Bulletproof car), driving it onto an oil slick, or eventually
+// missiles. Pulls alongside the player at matched speed, fires bullets every
+// ~1 second for several seconds, then accelerates away.
+function spawnEnforcer() {
+  const spawnZ = trackPos + PLAY_HEIGHT + 40;
+  const side = Math.random() < 0.5 ? -1 : 1;        // approach from L or R
+  const offset = 42;                                 // lateral pacing offset
+  const playerWorldSpeed = player.speed * player.maxSpeed;
+  enemies.push({
+    type: 'enforcer',
+    faction: 'enemy',
+    x: side * (offset + 8),
+    z: spawnZ,
+    vx: 0,
+    vz: playerWorldSpeed * 0.88,                     // slower at first so player catches up
+    hp: 999, maxHp: 999,
+    state: 'alive',
+    stateTime: 0,
+    spin: 0, spinSpeed: 0,
+    laneX: 0,
+    targetTree: null,
+    warningHits: 0, warningTimer: 0,
+    bumped: false,
+    bulletproof: true,
+    offRoadTimer: 0,
+    aiState: 'enforcer',
+    aiTimer: 9999,                                   // never cycles
+    targetSpeedRatio: 0.88,
+    // Enforcer-specific state
+    enforcerSide: side,
+    enforcerOffset: offset,
+    enforcerPhase: 'approach',                       // 'approach' | 'pace' | 'retreat'
+    enforcerPhaseTimer: 0,
+    enforcerFireCooldown: 1.2,
+  });
+}
+
 function spawnBulletproof() {
   const spawnZ = trackPos + PLAY_HEIGHT + 30;
   const hw = roadHalfWidthAt(spawnZ);
@@ -2166,9 +2354,9 @@ function spawnCivilian() {
   const spawnZ = trackPos + PLAY_HEIGHT + 30;
   const hw = roadHalfWidthAt(spawnZ);
   const laneX = (Math.random() - 0.5) * (hw - 20) * 1.4;
-  // Roll civilian type: ~25% motorcycle, ~25% taxi, ~50% sedan
+  // Roll civilian type: ~55% motorcycle, ~22% taxi, ~23% sedan
   const r = Math.random();
-  const type = r < 0.25 ? 'motorcycle' : r < 0.50 ? 'taxi' : 'sedan';
+  const type = r < 0.55 ? 'motorcycle' : r < 0.77 ? 'taxi' : 'sedan';
   const playerWorldSpeed = player.speed * player.maxSpeed;
   // Civilians drive FORWARD (positive vz) at some fraction of typical traffic
   // speed. Slower than the player → player gradually overtakes them.
@@ -2282,6 +2470,7 @@ function render() {
   for (const s of oilSlicks) drawOilSlick(s);
 
   for (const b of bullets) drawBullet(b);
+  for (const b of enemyBullets) drawEnemyBullet(b);
 
   for (const d of drawables) {
     if (d.kind === 'tree') drawTree(d.ref);
@@ -2725,6 +2914,65 @@ function drawMotorcycle(cx, cy, rotation, dinged) {
   ctx.restore();
 }
 
+function drawEnforcer(cx, cy, rotation, e) {
+  const w = 30, h = 58;
+  ctx.save();
+  ctx.translate(cx, cy);
+  if (rotation) ctx.rotate(rotation);
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(-w/2 + 3, -h/2 + 4, w, h);
+  // Body — long black limo
+  ctx.fillStyle = '#0e0e10';
+  roundRect(-w/2, -h/2, w, h, 5);
+  ctx.fillStyle = '#1c1c20';
+  roundRect(-w/2 + 2, -h/2 + 2, w - 4, h - 4, 4);
+  // Chrome trim along the sides
+  ctx.fillStyle = '#888a90';
+  ctx.fillRect(-w/2 + 1, 0, 1.5, 14);
+  ctx.fillRect( w/2 - 2.5, 0, 1.5, 14);
+  // Front windshield (tinted)
+  ctx.fillStyle = '#222630';
+  roundRect(-w/2 + 4, -h/2 + 8, w - 8, 10, 1);
+  // Rear windshield
+  roundRect(-w/2 + 4, h/2 - 16, w - 8, 8, 1);
+  // Side window panels (tinted) — long black limo look
+  ctx.fillStyle = '#2a2e36';
+  ctx.fillRect(-w/2 + 4, -h/2 + 22, w - 8, 18);
+  // The shooter's window — quarter window in the rear, lighter so the thug
+  // shows through. Side depends on which way the limo is shooting.
+  const side = (e && e.enforcerSide) || 1;
+  const shooterWinX = side * (w/2 - 5);
+  ctx.fillStyle = '#3a4252';
+  ctx.fillRect(shooterWinX - 2, -2, 4, 10);
+  // Thug silhouette: head and gun arm
+  if (e && e.enforcerPhase === 'pace') {
+    // Head
+    ctx.fillStyle = '#c89e7a';
+    ctx.beginPath();
+    ctx.arc(shooterWinX, 0, 2, 0, Math.PI*2);
+    ctx.fill();
+    // Gun barrel sticking out
+    ctx.fillStyle = '#222';
+    ctx.fillRect(side > 0 ? shooterWinX : shooterWinX - 6, 1, 6, 1.5);
+  }
+  // Headlights
+  ctx.fillStyle = '#ffffcc';
+  ctx.fillRect(-w/2 + 3, -h/2 + 1, 5, 3);
+  ctx.fillRect( w/2 - 8, -h/2 + 1, 5, 3);
+  // Tail lights
+  ctx.fillStyle = '#cc2222';
+  ctx.fillRect(-w/2 + 3, h/2 - 4, 5, 3);
+  ctx.fillRect( w/2 - 8, h/2 - 4, 5, 3);
+  // Wheels
+  ctx.fillStyle = '#0a0a0a';
+  ctx.fillRect(-w/2 - 1, -h/2 + 14, 2, 9);
+  ctx.fillRect( w/2 - 1, -h/2 + 14, 2, 9);
+  ctx.fillRect(-w/2 - 1, h/2 - 23, 2, 9);
+  ctx.fillRect( w/2 - 1, h/2 - 23, 2, 9);
+  ctx.restore();
+}
+
 function drawEnemy(e) {
   const sy = zToScreenY(e.z);
   if (sy < PLAY_TOP - 30 || sy > PLAY_BOTTOM + 10) return;
@@ -2744,6 +2992,7 @@ function drawEnemy(e) {
   else if (e.type === 'sedan') drawSedan(sx, sy, rot, dinged);
   else if (e.type === 'taxi') drawTaxi(sx, sy, rot, dinged);
   else if (e.type === 'motorcycle') drawMotorcycle(sx, sy, rot, dinged);
+  else if (e.type === 'enforcer') drawEnforcer(sx, sy, e.bumped ? (e.spin || 0) : rot, e);
 
   // Smoke for spinning cars
   if (e.state === 'spinning' && Math.random() < 0.3) {
@@ -3028,6 +3277,24 @@ function drawBullet(b) {
   ctx.fillRect(sx - 1.5, sy - 3, 3, 8);
   ctx.fillStyle = '#ffffaa';
   ctx.fillRect(sx - 1, sy - 1, 2, 3);
+}
+
+function drawEnemyBullet(b) {
+  const sy = zToScreenY(b.z);
+  if (sy < PLAY_TOP - 10 || sy > PLAY_BOTTOM) return;
+  const sx = ROAD.centerX + b.x;
+  // Orient streak along the bullet's motion vector
+  const ang = Math.atan2(-b.vz, b.vx);   // screen-y up = -vz
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.rotate(ang);
+  ctx.fillStyle = 'rgba(255, 80, 40, 0.45)';
+  ctx.fillRect(-6, -1.5, 12, 3);
+  ctx.fillStyle = '#ff6633';
+  ctx.fillRect(-3, -1, 6, 2);
+  ctx.fillStyle = '#ffeeaa';
+  ctx.fillRect(2, -0.5, 3, 1);
+  ctx.restore();
 }
 
 function drawParticles() {
