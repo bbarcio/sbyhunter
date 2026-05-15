@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v14';
+    const CACHE='spyhunter-v15';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -1964,11 +1964,13 @@ function update(dt) {
     enemySpawnTimer -= dt;
     if (enemySpawnTimer <= 0) {
       if (canSpawnAtFront()) {
-        // Pick enemy type based on level
+        // ~35% chance this enemy arrives from behind (catching up to player)
+        // instead of being overtaken from the front
+        const fromBehind = Math.random() < 0.35;
         if (cfg.bulletproofUnlocked && Math.random() < cfg.bulletproofChance) {
-          spawnBulletproof();
+          spawnBulletproof(fromBehind);
         } else {
-          spawnSwitchblade();
+          spawnSwitchblade(fromBehind);
         }
         enemySpawnTimer = cfg.enemySpawnMin + Math.random() * cfg.enemySpawnRange - player.speed * 0.4;
       } else {
@@ -2048,11 +2050,20 @@ function update(dt) {
           e.aiTimer -= dt;
           if (e.aiTimer <= 0) {
             if (e.bulletproof) {
+              // Bulletproofs prefer the 'rammer' aggressive close-on-player
+              // state half the time; otherwise stalk or block.
               const r = Math.random();
-              e.aiState = r < 0.6 ? 'stalker' : 'blocker';
-              if (e.aiState === 'blocker') e.targetSpeedRatio = 0.62 + Math.random() * 0.08;
-              else e.targetSpeedRatio = 0.70 + Math.random() * 0.10;
-              e.aiTimer = 0.8 + Math.random() * 1.0;
+              if (r < 0.5) {
+                e.aiState = 'rammer';
+                e.targetSpeedRatio = 0.85 + Math.random() * 0.10;
+              } else if (r < 0.8) {
+                e.aiState = 'stalker';
+                e.targetSpeedRatio = 0.74 + Math.random() * 0.08;
+              } else {
+                e.aiState = 'blocker';
+                e.targetSpeedRatio = 0.62 + Math.random() * 0.08;
+              }
+              e.aiTimer = 0.6 + Math.random() * 0.9;
             } else {
               const r = Math.random();
               if (r < 0.4) e.aiState = 'stalker';
@@ -2096,6 +2107,12 @@ function update(dt) {
         } else if (e.aiState === 'blocker') {
           // Position directly above player & slow down — be a road block
           e.vx += Math.sign(player.x - e.x) * 25 * dt;
+        } else if (e.aiState === 'rammer') {
+          // Aggressively close on player X — used by Bulletproofs to bump.
+          // Steer harder when closer in Z to actually make contact.
+          const dz = Math.abs(e.z - trackPos);
+          const steer = dz < 50 ? 95 : 50;
+          e.vx += Math.sign(player.x - e.x) * steer * dt;
         } else if (e.aiState === 'chaser') {
           // Coming up from behind. Steer hard toward player X.
           const dz = Math.abs(e.z - trackPos);
@@ -2119,7 +2136,7 @@ function update(dt) {
 
       // vx cap — bumped enemies allow stronger sideways speed
       const vxCap = e.bumped ? 200
-        : (e.aiState === 'slasher' || e.aiState === 'chaser' ? 90 : 50);
+        : (e.aiState === 'slasher' || e.aiState === 'chaser' || e.aiState === 'rammer' ? 110 : 50);
       e.vx = Math.max(-vxCap, Math.min(vxCap, e.vx));
 
       // --- Bumped Switchblade / Bulletproof tree-kill check ---
@@ -2343,13 +2360,25 @@ function update(dt) {
     }
 
     // Player collision — distinguish crash (head-on) from bump (side-swipe).
-    // Motorcycles are narrower than cars, so their crash + bump bands shrink.
+    // Hitbox scales per type:
+    //   motorcycle: narrower than cars (smaller bands)
+    //   enforcer:   longer and slightly wider than cars (bigger bands so
+    //               player can't slip past the tail when bumping from behind)
+    const zBand =
+      e.type === 'enforcer' ? 33 :
+      25;
     if (gameMode === 'playing' && player.alive && player.invincibleTimer <= 0 && e.state === 'alive' &&
-        Math.abs(e.z - trackPos) < 25) {
+        Math.abs(e.z - trackPos) < zBand) {
       const dx = e.x - player.x;
       const absDx = Math.abs(dx);
-      const crashBand = e.type === 'motorcycle' ? 12 : 19;
-      const bumpBand  = e.type === 'motorcycle' ? 20 : 28;
+      const crashBand =
+        e.type === 'motorcycle' ? 12 :
+        e.type === 'enforcer'   ? 22 :
+        19;
+      const bumpBand =
+        e.type === 'motorcycle' ? 20 :
+        e.type === 'enforcer'   ? 32 :
+        28;
 
       if (absDx < crashBand) {
         // CRASH — significant X overlap, we slammed into them
@@ -2940,20 +2969,24 @@ function updateCraters(dt) {
 }
 
 function spawnEnforcer() {
-  // Spawn within the visible play area so the player actually sees the
-  // limo arrive — far enough ahead to telegraph it, close enough that the
-  // approach phase is short.
-  const spawnZ = trackPos + Math.floor(PLAY_HEIGHT * 0.55);
-  const side = Math.random() < 0.5 ? -1 : 1;        // approach from L or R
-  const offset = 42;                                 // lateral pacing offset
+  // 50/50 — pull up from behind (overtaking) or from the front (slows so
+  // player catches up). Either way, spawn OFF-screen so it visibly enters
+  // rather than popping into the middle of the playfield.
+  const fromBehind = Math.random() < 0.5;
+  const spawnZ = fromBehind
+    ? trackPos - 100
+    : trackPos + PLAY_HEIGHT + 50;
+  const side = Math.random() < 0.5 ? -1 : 1;
+  const offset = 42;
   const playerWorldSpeed = Math.max(player.speed * player.maxSpeed, 120);
+  const approachSpeedRatio = fromBehind ? 1.22 : 0.94;
   enemies.push({
     type: 'enforcer',
     faction: 'enemy',
     x: side * (offset + 8),
     z: spawnZ,
     vx: 0,
-    vz: playerWorldSpeed * 0.92,                     // slightly slower so player catches up quickly
+    vz: playerWorldSpeed * approachSpeedRatio,
     hp: 999, maxHp: 999,
     state: 'alive',
     stateTime: 0,
@@ -2965,30 +2998,41 @@ function spawnEnforcer() {
     bulletproof: true,
     offRoadTimer: 0,
     aiState: 'enforcer',
-    aiTimer: 9999,                                   // never cycles
-    targetSpeedRatio: 0.92,
+    aiTimer: 9999,
+    targetSpeedRatio: approachSpeedRatio,
     // Enforcer-specific state
     enforcerSide: side,
     enforcerOffset: offset,
-    enforcerPhase: 'approach',                       // 'approach' | 'pace' | 'retreat'
+    enforcerPhase: 'approach',
     enforcerPhaseTimer: 0,
     enforcerFireCooldown: 1.2,
   });
 }
 
-function spawnBulletproof() {
-  const spawnZ = trackPos + PLAY_HEIGHT + 30;
+function spawnBulletproof(fromBehind) {
+  const spawnZ = fromBehind ? trackPos - 80 : trackPos + PLAY_HEIGHT + 30;
   const hw = roadHalfWidthAt(spawnZ);
   const x = (Math.random() - 0.5) * (hw - 16) * 1.4;
   const playerWorldSpeed = player.speed * player.maxSpeed;
+  // Bulletproof bias: prefer 'rammer' (aggressively closes on player x)
+  // about half the time, falling back to stalker / blocker the rest. From
+  // behind they spawn as 'chaser' to immediately drive in for the ram.
+  const rRoll = Math.random();
+  const initialAiState = fromBehind
+    ? 'chaser'
+    : rRoll < 0.5 ? 'rammer'
+      : rRoll < 0.8 ? 'stalker'
+      : 'blocker';
   enemies.push({
     type: 'bulletproof',
     faction: 'enemy',
     x: Math.max(-hw + 14, Math.min(hw - 14, x)),
     z: spawnZ,
     vx: (Math.random() - 0.5) * 15,
-    vz: playerWorldSpeed * (0.72 + Math.random() * 0.08),  // slower than Switchblade
-    hp: 999,                                                // effectively bulletproof
+    vz: fromBehind
+      ? playerWorldSpeed * (1.08 + Math.random() * 0.06)     // catching up
+      : playerWorldSpeed * (0.72 + Math.random() * 0.08),    // overtake-able
+    hp: 999,
     maxHp: 999,
     state: 'alive',
     stateTime: 0,
@@ -3000,19 +3044,18 @@ function spawnBulletproof() {
     warningTimer: 0,
     bumped: false,
     bulletproof: true,
-    offRoadTimer: 0,                                        // counts up while off-road
-    aiState: 'stalker',
-    aiTimer: 0.3 + Math.random() * 0.5,
-    targetSpeedRatio: 0.75 + Math.random() * 0.06
+    offRoadTimer: 0,
+    aiState: initialAiState,
+    aiTimer: 0.6 + Math.random() * 0.8,
+    targetSpeedRatio: fromBehind ? 1.08 : (initialAiState === 'blocker' ? 0.62 : 0.85),
+    _chaserChecked: fromBehind,   // already chasing, don't re-roll
   });
 }
 
-function spawnSwitchblade() {
-  const spawnZ = trackPos + PLAY_HEIGHT + 30;
+function spawnSwitchblade(fromBehind) {
+  const spawnZ = fromBehind ? trackPos - 80 : trackPos + PLAY_HEIGHT + 30;
   const hw = roadHalfWidthAt(spawnZ);
   const x = (Math.random() - 0.5) * (hw - 16) * 1.6;
-  // CRITICAL: Switchblades have POSITIVE vz — they're DRIVING FORWARD through the world.
-  // Spawned somewhat slower than player so they're cars the player is overtaking.
   const playerWorldSpeed = player.speed * player.maxSpeed;
   enemies.push({
     type: 'switchblade',
@@ -3020,7 +3063,9 @@ function spawnSwitchblade() {
     x: Math.max(-hw + 14, Math.min(hw - 14, x)),
     z: spawnZ,
     vx: (Math.random() - 0.5) * 25,
-    vz: playerWorldSpeed * (0.75 + Math.random() * 0.08),    // 75-83% of player speed at spawn
+    vz: fromBehind
+      ? playerWorldSpeed * (1.10 + Math.random() * 0.08)     // catching up
+      : playerWorldSpeed * (0.75 + Math.random() * 0.08),    // 75-83% of player
     hp: 3,
     maxHp: 3,
     state: 'alive',
@@ -3032,9 +3077,10 @@ function spawnSwitchblade() {
     warningHits: 0,
     warningTimer: 0,
     bumped: false,
-    aiState: 'stalker',
-    aiTimer: 0.3 + Math.random() * 0.5,
-    targetSpeedRatio: 0.78 + Math.random() * 0.08
+    aiState: fromBehind ? 'chaser' : 'stalker',
+    aiTimer: fromBehind ? 9999 : (0.3 + Math.random() * 0.5),
+    targetSpeedRatio: fromBehind ? 1.10 : (0.78 + Math.random() * 0.08),
+    _chaserChecked: fromBehind,
   });
 }
 
