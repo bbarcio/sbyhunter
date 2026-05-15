@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v9';
+    const CACHE='spyhunter-v10';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -314,6 +314,7 @@ if('serviceWorker' in navigator){
     <span class="warn">BLACK</span> Enforcer limo (Lvl 3+): shoots sideways at you —<br>
     bump it off the road or oil-slick it!<br>
     Catch the gray <span class="key">WEAPONS VAN</span> from behind to upgrade.<br>
+    Tap <span class="key">MSL</span> for a missile — one-shot kills any enemy!<br>
     Drop <span class="key">OIL</span> behind you to spin out chasers!<br>
     <span class="warn">DO NOT</span> shoot civilians.
   </p>
@@ -435,7 +436,7 @@ function addBtnEvents(elId, key, onPress) {
   el.addEventListener('mouseleave', off);
 }
 addBtnEvents('btn-guns', 'gunsHeld');
-addBtnEvents('btn-missiles', 'missilesHeld');
+addBtnEvents('btn-missiles', 'missilesHeld', () => fireMissile());
 addBtnEvents('btn-oil', 'oilHeld', () => dropOilSlick());
 addBtnEvents('btn-smoke', 'smokeHeld');
 
@@ -1118,6 +1119,62 @@ function sfxPickup() {
   osc.start(t); osc.stop(t + 0.24);
 }
 
+function sfxMissileFire() {
+  if (!AUDIO.ctx) return;
+  const c = AUDIO.ctx, t = c.currentTime;
+  // Whoosh: bandpass-filtered noise rising in cutoff
+  const n = c.createBufferSource();
+  n.buffer = noiseBuf(0.45);
+  const bp = c.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.setValueAtTime(400, t);
+  bp.frequency.exponentialRampToValueAtTime(2200, t + 0.45);
+  bp.Q.value = 3;
+  const g = c.createGain();
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(0.45, t + 0.04);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+  n.connect(bp); bp.connect(g); g.connect(AUDIO.sfxGain);
+  n.start(t); n.stop(t + 0.45);
+  // Pitched body: descending sine for the engine note
+  const osc = c.createOscillator();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(280, t);
+  osc.frequency.exponentialRampToValueAtTime(140, t + 0.45);
+  const og = c.createGain();
+  og.gain.setValueAtTime(0.18, t);
+  og.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+  osc.connect(og); og.connect(AUDIO.sfxGain);
+  osc.start(t); osc.stop(t + 0.45);
+}
+
+function sfxMissileBoom() {
+  if (!AUDIO.ctx) return;
+  const c = AUDIO.ctx, t = c.currentTime;
+  // Bigger and brighter than sfxExplode — layered noise + sub thump
+  const n = c.createBufferSource();
+  n.buffer = noiseBuf(0.7);
+  const lp = c.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(3200, t);
+  lp.frequency.exponentialRampToValueAtTime(180, t + 0.7);
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.8, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+  n.connect(lp); lp.connect(g); g.connect(AUDIO.sfxGain);
+  n.start(t); n.stop(t + 0.7);
+  // Sub thump
+  const sub = c.createOscillator();
+  sub.type = 'sine';
+  sub.frequency.setValueAtTime(160, t);
+  sub.frequency.exponentialRampToValueAtTime(40, t + 0.3);
+  const sg = c.createGain();
+  sg.gain.setValueAtTime(0.55, t);
+  sg.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+  sub.connect(sg); sg.connect(AUDIO.sfxGain);
+  sub.start(t); sub.stop(t + 0.36);
+}
+
 function sfxTreeCrash() {
   if (!AUDIO.ctx) return;
   const c = AUDIO.ctx, t = c.currentTime;
@@ -1349,6 +1406,7 @@ function getPlayerScreenY() {
 // ============================================================
 const bullets = [];
 const enemyBullets = [];   // lateral bullets fired by Enforcer thugs
+const missiles = [];        // player-fired missiles — bigger, faster, instant-kill
 const enemies = [];
 const particles = [];
 
@@ -1420,6 +1478,7 @@ function startGame() {
   player.ammo.smoke = 0;
   bullets.length = 0;
   enemyBullets.length = 0;
+  missiles.length = 0;
   enemies.length = 0;
   particles.length = 0;
   wrecks.length = 0;
@@ -1505,6 +1564,7 @@ function triggerCrash(crashX) {
     if (Math.abs(enemies[i].z - trackPos) < 120) enemies.splice(i, 1);
   }
   enemyBullets.length = 0;
+  missiles.length = 0;
 }
 
 function spawnTruck() {
@@ -1642,6 +1702,62 @@ function update(dt) {
     const b = bullets[i];
     b.z += b.vz * dt;
     if (b.z - trackPos > PLAY_HEIGHT + 50) bullets.splice(i, 1);
+  }
+
+  // Missiles — forward-firing player ordnance. Faster than bullets,
+  // leaves a smoke trail, instant-kills any enemy on contact.
+  for (let i = missiles.length - 1; i >= 0; i--) {
+    const m = missiles[i];
+    m.z += m.vz * dt;
+    m.life -= dt;
+    m.smokeTimer -= dt;
+    // Smoke trail
+    if (m.smokeTimer <= 0) {
+      m.smokeTimer = 0.02;
+      particles.push({
+        x: m.x + (Math.random() - 0.5) * 3,
+        z: m.z - 6,
+        vx: (Math.random() - 0.5) * 25,
+        vz: -10 - Math.random() * 18,
+        life: 0.45,
+        color: 'rgba(220,220,225,0.6)'
+      });
+    }
+    if (m.life <= 0 || m.z - trackPos > PLAY_HEIGHT + 50) {
+      missiles.splice(i, 1);
+      continue;
+    }
+    // Enemy collision — instant kill regardless of bulletproof
+    let consumed = false;
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const e = enemies[j];
+      if (e.state !== 'alive') continue;
+      if (e.faction === 'civilian') continue;       // missiles only target enemies
+      if (Math.abs(m.z - e.z) < 22 && Math.abs(m.x - e.x) < 16) {
+        sfxMissileBoom();
+        explode(e.x, e.z, '#ffaa44', 28);
+        // Bigger debris burst
+        for (let k = 0; k < 18; k++) {
+          particles.push({
+            x: e.x, z: e.z,
+            vx: (Math.random() - 0.5) * 280,
+            vz: (Math.random() - 0.5) * 220,
+            life: 0.5 + Math.random() * 0.4,
+            color: k % 3 === 0 ? '#ffee88' : '#ff7733'
+          });
+        }
+        player.score += (e.type === 'enforcer' ? 1000
+                       : e.bulletproof ? 700
+                       : 200);
+        enemies.splice(j, 1);
+        consumed = true;
+        break;
+      }
+    }
+    if (consumed) {
+      missiles.splice(i, 1);
+      continue;
+    }
   }
 
   // Enemy bullets — fired by Enforcer thugs. Travel diagonally toward
@@ -2187,9 +2303,20 @@ function update(dt) {
   if (gameMode === 'playing' && currentLevel >= 2 && weaponsVans.length === 0) {
     weaponsVanSpawnTimer -= dt;
     if (weaponsVanSpawnTimer <= 0) {
-      // Skip if player is at max ammo for oil already AND no other weapons unlocked
-      // (for v1.1 always oil — but if maxed, still send the truck so player can see and skip)
-      spawnWeaponsVan('oil');
+      // Pick a weapon. Missiles unlock at Lvl 2+ alongside Bulletproof
+      // cars, when the player most needs them. Bias toward whichever
+      // weapon the player is more depleted on so vans feel useful.
+      const oilDeficit = player.ammoMax - player.ammo.oil;
+      const mslDeficit = player.ammoMax - player.ammo.missiles;
+      let weaponType;
+      if (currentLevel < 2) {
+        weaponType = 'oil';
+      } else {
+        // Weighted random favouring the more-needed weapon
+        const total = Math.max(1, oilDeficit + mslDeficit);
+        weaponType = Math.random() * total < oilDeficit ? 'oil' : 'missiles';
+      }
+      spawnWeaponsVan(weaponType);
       weaponsVanSpawnTimer = 30 + Math.random() * 15;
     }
   }
@@ -2608,6 +2735,31 @@ function explode(x, z, color, count) {
 // === Oil Slick mechanic ===
 // Drops a slick BEHIND the player at the current X. The slick is a world entity
 // that scrolls naturally; any enemy that drives through it spins out.
+function fireMissile() {
+  if (gameMode !== 'playing' || !player.alive) return;
+  if (player.ammo.missiles <= 0) return;
+  player.ammo.missiles -= 1;
+  sfxMissileFire();
+  missiles.push({
+    x: player.x,
+    z: trackPos + 30,
+    vz: 900,                  // faster than gun bullets
+    smokeTimer: 0,
+    life: 1.6,
+  });
+  // Muzzle smoke puff
+  for (let k = 0; k < 8; k++) {
+    particles.push({
+      x: player.x + (Math.random() - 0.5) * 10,
+      z: trackPos + 20,
+      vx: (Math.random() - 0.5) * 60,
+      vz: -20 - Math.random() * 40,
+      life: 0.4,
+      color: 'rgba(200,200,210,0.65)'
+    });
+  }
+}
+
 function dropOilSlick() {
   if (gameMode !== 'playing' || !player.alive) return;
   if (player.ammo.oil <= 0) return;
@@ -2677,6 +2829,7 @@ function render() {
 
   for (const b of bullets) drawBullet(b);
   for (const b of enemyBullets) drawEnemyBullet(b);
+  for (const m of missiles) drawMissile(m);
 
   for (const d of drawables) {
     if (d.kind === 'tree') drawTree(d.ref);
@@ -3501,6 +3654,33 @@ function drawEnemyBullet(b) {
   ctx.fillStyle = '#ffeeaa';
   ctx.fillRect(2, -0.5, 3, 1);
   ctx.restore();
+}
+
+function drawMissile(m) {
+  const sy = zToScreenY(m.z);
+  if (sy < PLAY_TOP - 14 || sy > PLAY_BOTTOM + 6) return;
+  const sx = ROAD.centerX + m.x;
+  // Body: silver/grey rocket
+  ctx.fillStyle = '#cccccc';
+  ctx.fillRect(sx - 2, sy - 8, 4, 14);
+  // Warhead nose (tapered red tip)
+  ctx.fillStyle = '#bb2222';
+  ctx.beginPath();
+  ctx.moveTo(sx - 2, sy - 8);
+  ctx.lineTo(sx + 2, sy - 8);
+  ctx.lineTo(sx, sy - 13);
+  ctx.closePath();
+  ctx.fill();
+  // Fins
+  ctx.fillStyle = '#888';
+  ctx.fillRect(sx - 4, sy + 2, 2, 4);
+  ctx.fillRect(sx + 2, sy + 2, 2, 4);
+  // Flame exhaust — yellow inner, orange outer, flickering
+  const flick = 1 + Math.random() * 1.6;
+  ctx.fillStyle = 'rgba(255,140,40,0.85)';
+  ctx.fillRect(sx - 2, sy + 6, 4, 4 + flick * 2);
+  ctx.fillStyle = '#ffee88';
+  ctx.fillRect(sx - 1, sy + 6, 2, 3 + flick);
 }
 
 function drawParticles() {
