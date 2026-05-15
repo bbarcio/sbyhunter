@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v15';
+    const CACHE='spyhunter-v16';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -2371,6 +2371,10 @@ function update(dt) {
         Math.abs(e.z - trackPos) < zBand) {
       const dx = e.x - player.x;
       const absDx = Math.abs(dx);
+      // 'Behind' = enemy meaningfully further down the road than player.
+      // Used to defang rear-end collisions: a rear bump should never kill
+      // — only side-swipes (blades) and head-on collisions do.
+      const enemyIsBehind = (e.z - trackPos) < -2;
       const crashBand =
         e.type === 'motorcycle' ? 12 :
         e.type === 'enforcer'   ? 22 :
@@ -2381,19 +2385,31 @@ function update(dt) {
         28;
 
       if (absDx < crashBand) {
-        // CRASH — significant X overlap, we slammed into them
-        triggerCrash(player.x);
-        enemies.splice(i, 1);
-        continue;
+        if (enemyIsBehind) {
+          // Rear-end love-tap — chaser ran into the back of us. Push them
+          // sideways and slow them slightly; nobody dies.
+          sfxBump();
+          const sideX = (dx === 0) ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(dx);
+          e.vx += sideX * 60;
+          e.vz *= 0.92;
+          e.z -= 6;                     // shove them backward in world Z
+          explode(player.x, trackPos - 18, '#ddeeff', 5);
+          player.x += sideX * 1.5;      // mild jolt forward sideways
+        } else {
+          // Head-on crash — we plowed into something in front of us
+          triggerCrash(player.x);
+          enemies.splice(i, 1);
+          continue;
+        }
       } else if (absDx < bumpBand) {
         // SIDE-SWIPE BAND — bump territory. Check who's pushing into whom.
         const playerClosingVx = Math.sign(dx) * player.vx;   // positive if PLAYER moves toward enemy
         const enemyClosingVx = -Math.sign(dx) * e.vx;        // positive if ENEMY moves toward player
 
-        // Switchblade slasher attack: enemy aggressively side-swipes player with blades = crash
-        // (Bulletproof cars don't have blades, so this only applies to non-bulletproof enemies.)
-        if (e.faction === 'enemy' && !e.bulletproof && enemyClosingVx > 30) {
-          // Their wheel blades caught us
+        // Switchblade slasher attack: enemy aggressively side-swipes player
+        // with blades. Only counts as a kill if the enemy is alongside or
+        // in front — blades can't hit your tires from behind your bumper.
+        if (e.faction === 'enemy' && !e.bulletproof && enemyClosingVx > 30 && !enemyIsBehind) {
           triggerCrash(player.x);
           enemies.splice(i, 1);
           continue;
