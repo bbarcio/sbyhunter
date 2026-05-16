@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v17';
+    const CACHE='spyhunter-v18';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -343,6 +343,10 @@ let scale = 1, offsetX = 0, offsetY = 0;
 
 const BAND_HEIGHT = 170;
 const BAND_TOP = VH - BAND_HEIGHT;
+// Top of the steering band is reserved padding so the thumb at full
+// speed doesn't visually cover the bottom of the road.
+const BAND_TOP_PAD = 35;
+const BAND_TOP_USABLE = BAND_TOP + BAND_TOP_PAD;
 const PLAY_TOP = 0;
 const PLAY_BOTTOM = BAND_TOP;
 const PLAY_HEIGHT = PLAY_BOTTOM - PLAY_TOP;
@@ -465,7 +469,7 @@ canvas.addEventListener('touchmove', e => {
       e.preventDefault();
       const v = toVirtual(t.clientX, t.clientY);
       input.dragX = Math.max(0, Math.min(VW, v.x));
-      input.dragY = Math.max(BAND_TOP, Math.min(VH, v.y));
+      input.dragY = Math.max(BAND_TOP_USABLE, Math.min(VH, v.y));
     }
   }
 }, { passive: false });
@@ -494,7 +498,7 @@ canvas.addEventListener('mousemove', e => {
   if (!input.dragging) return;
   const v = toVirtual(e.clientX, e.clientY);
   input.dragX = Math.max(0, Math.min(VW, v.x));
-  input.dragY = Math.max(BAND_TOP, Math.min(VH, v.y));
+  input.dragY = Math.max(BAND_TOP_USABLE, Math.min(VH, v.y));
 });
 window.addEventListener('mouseup', () => { input.dragging = false; });
 
@@ -1551,7 +1555,7 @@ const player = {
 // At higher speeds the player car moves UP, giving forward visibility and exposing
 // space behind for rear-view threats (oil slick / smoke screen / catch-up enemies).
 const PLAYER_SCREEN_Y_BASE = PLAY_BOTTOM - 70;
-const PLAYER_SCREEN_Y_LIFT = 60;     // total px lift between idle and max speed
+const PLAYER_SCREEN_Y_LIFT = 110;    // total px lift between idle and max speed — bigger value gives more rear-view at top speed
 function getPlayerScreenY() {
   // Smooth lift starting around 30% speed; full lift around 95%+.
   // Use eased curve so the shift feels natural under your finger.
@@ -1818,7 +1822,10 @@ function update(dt) {
   let targetSpeed = player.speed;
   if (gameMode === 'playing' && input.dragging) {
     targetX = ((input.dragX / VW) - 0.5) * 2 * (VW * 0.45);
-    const vy = 1 - ((input.dragY - BAND_TOP) / BAND_HEIGHT);
+    // dragY is clamped to [BAND_TOP_USABLE, VH] — rescale so vy=1 at the
+    // usable-top edge, vy=0 at the band bottom.
+    const usableHeight = BAND_HEIGHT - BAND_TOP_PAD;
+    const vy = 1 - ((input.dragY - BAND_TOP_USABLE) / usableHeight);
     if (vy > 0.55) targetSpeed = 0.5 + ((vy - 0.55) / 0.45) * 0.5;
     else if (vy < 0.25) targetSpeed = (vy / 0.25) * 0.35;
     else targetSpeed = player.cruiseSpeed + (vy - 0.4) * 0.4;
@@ -2923,6 +2930,11 @@ function dropBomb(h) {
   bombs.push({
     x: h.x,
     z: h.z,
+    // Inherit the helicopter's forward velocity so the bomb travels along
+    // with the player rather than being left behind as the player drives
+    // forward — that was making bombs and craters land off-screen behind
+    // the car and effectively never threaten the player.
+    vz: h.vz,
     altitude: h.altitude,       // start at helicopter altitude
     fallRate: 110,              // px of altitude per sec
     whistlePhase: Math.random(), // for whistle pitch variation
@@ -2933,6 +2945,7 @@ function dropBomb(h) {
 function updateBombs(dt) {
   for (let i = bombs.length - 1; i >= 0; i--) {
     const b = bombs[i];
+    if (b.vz) b.z += b.vz * dt;  // travel forward with inherited momentum
     b.altitude -= b.fallRate * dt;
     b.fallRate += 80 * dt;       // accelerate downward (gravity-ish)
     if (b.altitude <= 0) {
@@ -4145,19 +4158,19 @@ function drawHelicopter(h) {
   ctx.beginPath();
   ctx.ellipse(0, -10, 6, 5, 0, 0, Math.PI*2);
   ctx.fill();
-  // Tail boom — narrower than before
+  // Tail boom — longer shaft so the silhouette reads as a helicopter
   ctx.fillStyle = '#3a4a32';
-  ctx.fillRect(-2.5, 10, 5, 16);
+  ctx.fillRect(-2.5, 10, 5, 28);
   // Tail rotor — small spinning prop on the boom
   ctx.save();
-  ctx.translate(0, 26);
+  ctx.translate(0, 38);
   ctx.rotate(h.rotorAngle * 1.6);
   ctx.fillStyle = 'rgba(60,60,60,0.6)';
   ctx.fillRect(-7, -0.7, 14, 1.4);
   ctx.restore();
-  // Tail fin
+  // Tail fin near the rear of the boom
   ctx.fillStyle = '#536648';
-  ctx.fillRect(-3.5, 22, 7, 3);
+  ctx.fillRect(-3.5, 34, 7, 3);
   // Landing skids (faint, top-down view)
   ctx.fillStyle = '#222';
   ctx.fillRect(-10, -6, 1.2, 18);
