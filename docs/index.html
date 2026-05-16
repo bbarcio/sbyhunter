@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v19';
+    const CACHE='spyhunter-v20';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -2508,6 +2508,69 @@ function update(dt) {
     if (warningTimer <= 0) warningEl.classList.remove('show');
   }
 
+  // === Car-vs-car collisions ===
+  // Cars no longer pass through each other. Soft overlaps push them
+  // apart; high-impact contact spins out the vulnerable side so the
+  // player can chain bumps to knock out other enemies.
+  for (let i = 0; i < enemies.length; i++) {
+    const a = enemies[i];
+    if (a.state !== 'alive') continue;
+    for (let j = i + 1; j < enemies.length; j++) {
+      const b = enemies[j];
+      if (b.state !== 'alive') continue;
+      const ddx = b.x - a.x;
+      const ddz = b.z - a.z;
+      const adx = Math.abs(ddx);
+      const adz = Math.abs(ddz);
+      // Overlap radii — motorcycles are smaller
+      const aR = a.type === 'motorcycle' ? 8  : a.type === 'enforcer' ? 16 : 13;
+      const bR = b.type === 'motorcycle' ? 8  : b.type === 'enforcer' ? 16 : 13;
+      const xR = aR + bR;
+      const aZ = a.type === 'enforcer' ? 28 : 20;
+      const bZ = b.type === 'enforcer' ? 28 : 20;
+      const zR = aZ + bZ;
+      if (adx > xR || adz > zR) continue;
+
+      // Push apart laterally
+      const dir = ddx === 0 ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(ddx);
+      const overlap = xR - adx;
+      a.x -= dir * overlap * 0.5;
+      b.x += dir * overlap * 0.5;
+
+      // Closing-velocity magnitude in the x dimension
+      const aClosing =  dir * a.vx;     // positive if a moving toward b
+      const bClosing = -dir * b.vx;     // positive if b moving toward a
+      const totalClosing = Math.max(0, aClosing) + Math.max(0, bClosing);
+
+      if (totalClosing > 65) {
+        // High-impact hit: spin out the vulnerable side(s). Bulletproof
+        // and Enforcer shrug it off but still bounce.
+        const vulnerable = (e) => !e.bulletproof && e.type !== 'enforcer';
+        const playerWorldSpeed = player.speed * player.maxSpeed;
+        const spinOut = (e, signDir) => {
+          if (!vulnerable(e)) return;
+          e.state = 'spinning';
+          e.stateTime = 0;
+          e.spin = 0;
+          e.spinSpeed = signDir * (10 + Math.random() * 8);
+          const angleDeg = 15 + Math.random() * 20;
+          const angleRad = angleDeg * Math.PI / 180;
+          const remainingForward = playerWorldSpeed * (0.30 + Math.random() * 0.15);
+          e.vx = signDir * Math.sin(angleRad) * 90;
+          e.vz = remainingForward * Math.cos(angleRad);
+          e.targetTree = null;
+        };
+        spinOut(a, -dir);
+        spinOut(b,  dir);
+        sfxBump();
+      } else {
+        // Soft bump — bounce them apart with a mild lateral jolt
+        a.vx -= dir * 40;
+        b.vx += dir * 40;
+      }
+    }
+  }
+
   // Trees
   if (gameMode === 'playing' && player.alive && player.invincibleTimer <= 0) {
     const playerScreenX = ROAD.centerX + player.x;
@@ -3050,7 +3113,11 @@ function spawnEnforcer() {
 }
 
 function spawnBulletproof(fromBehind) {
-  const spawnZ = fromBehind ? trackPos - 80 : trackPos + PLAY_HEIGHT + 30;
+  // Spawn from behind: place the car ~40 px below the visible play area
+  // so it actually eases up from off-screen rather than popping into
+  // the rear-view zone mid-air.
+  const rearOffscreen = (PLAY_BOTTOM - getPlayerScreenY()) + 40;
+  const spawnZ = fromBehind ? trackPos - rearOffscreen : trackPos + PLAY_HEIGHT + 30;
   const hw = roadHalfWidthAt(spawnZ);
   const x = (Math.random() - 0.5) * (hw - 16) * 1.4;
   const playerWorldSpeed = player.speed * player.maxSpeed;
@@ -3093,7 +3160,8 @@ function spawnBulletproof(fromBehind) {
 }
 
 function spawnSwitchblade(fromBehind) {
-  const spawnZ = fromBehind ? trackPos - 80 : trackPos + PLAY_HEIGHT + 30;
+  const rearOffscreen = (PLAY_BOTTOM - getPlayerScreenY()) + 40;
+  const spawnZ = fromBehind ? trackPos - rearOffscreen : trackPos + PLAY_HEIGHT + 30;
   const hw = roadHalfWidthAt(spawnZ);
   const x = (Math.random() - 0.5) * (hw - 16) * 1.6;
   const playerWorldSpeed = player.speed * player.maxSpeed;
