@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v18';
+    const CACHE='spyhunter-v19';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -341,14 +341,17 @@ const VW = 360;
 const VH = 640;
 let scale = 1, offsetX = 0, offsetY = 0;
 
-const BAND_HEIGHT = 170;
+const BAND_HEIGHT = 140;
 const BAND_TOP = VH - BAND_HEIGHT;
 // Top of the steering band is reserved padding so the thumb at full
 // speed doesn't visually cover the bottom of the road.
-const BAND_TOP_PAD = 35;
+const BAND_TOP_PAD = 30;
 const BAND_TOP_USABLE = BAND_TOP + BAND_TOP_PAD;
+// Visible gap between the bottom of the road and the top of the
+// steering band so the player can tell where the control zone begins.
+const BAND_BORDER_GAP = 12;
 const PLAY_TOP = 0;
-const PLAY_BOTTOM = BAND_TOP;
+const PLAY_BOTTOM = BAND_TOP - BAND_BORDER_GAP;
 const PLAY_HEIGHT = PLAY_BOTTOM - PLAY_TOP;
 
 function resize() {
@@ -2835,7 +2838,9 @@ function fireEnemyBullet(e) {
 // few bombs, then leaves. Gun bullets pass right through (altitude); only
 // missiles can take it down. Bombs hit either directly or leave craters.
 function spawnHelicopter() {
-  const spawnZ = trackPos + Math.floor(PLAY_HEIGHT * 0.85);
+  // Spawn in the upper half of the play area, close enough that the
+  // approach phase completes in a few seconds.
+  const spawnZ = trackPos + Math.floor(PLAY_HEIGHT * 0.55);
   const side = Math.random() < 0.5 ? -1 : 1;
   const startX = side * 90;
   const playerWorldSpeed = Math.max(player.speed * player.maxSpeed, 120);
@@ -2843,13 +2848,13 @@ function spawnHelicopter() {
     x: startX,
     z: spawnZ,
     vx: 0,
-    vz: playerWorldSpeed * 0.92,
-    altitude: 90,                 // visual lift in screen pixels (above the road)
+    vz: playerWorldSpeed * 0.7,         // slower than player so closure is fast
+    altitude: 90,
     rotorAngle: 0,
-    phase: 'approach',            // 'approach' | 'hover' | 'leave'
+    phase: 'approach',
     phaseTimer: 0,
     bombDropTimer: 1.5,
-    bombsLeft: 3 + Math.floor(Math.random() * 2),  // 3 or 4 bombs per visit
+    bombsLeft: 3 + Math.floor(Math.random() * 2),
   });
   sfxHeliArrive();
 }
@@ -2863,10 +2868,12 @@ function updateHelicopters(dt) {
     const dz = h.z - trackPos;
 
     if (h.phase === 'approach') {
-      // Close on player; once over them, switch to hover
-      h.vz = playerWorldSpeed * 0.94;
+      // Slower than player so the player closes the gap quickly
+      h.vz = playerWorldSpeed * 0.72;
       h.vx += (player.x - h.x) * 1.2 * dt;
-      if (Math.abs(dz) < 30) {
+      // Switch to hover once close enough — wider window so bombs start
+      // dropping sooner.
+      if (Math.abs(dz) < 60) {
         h.phase = 'hover';
         h.phaseTimer = 0;
       }
@@ -2902,15 +2909,19 @@ function updateHelicopters(dt) {
       continue;
     }
 
-    // Missile hit detection — bigger collision box than ground enemies
+    // Missile hit detection — bigger collision box than ground enemies.
+    // Note: the visual explosion is offset upward by h.altitude in world Z
+    // so it spawns at the helicopter's lifted screen position rather than
+    // at the road level under it.
     for (let j = missiles.length - 1; j >= 0; j--) {
       const m = missiles[j];
-      if (Math.abs(m.z - h.z) < 28 && Math.abs(m.x - h.x) < 28) {
+      if (Math.abs(m.z - h.z) < 32 && Math.abs(m.x - h.x) < 32) {
         sfxMissileBoom();
-        explode(h.x, h.z, '#ffaa44', 36);
+        const boomZ = h.z + h.altitude;   // visually lifts particles to chopper height
+        explode(h.x, boomZ, '#ffaa44', 36);
         for (let k = 0; k < 26; k++) {
           particles.push({
-            x: h.x, z: h.z,
+            x: h.x, z: boomZ,
             vx: (Math.random() - 0.5) * 320,
             vz: (Math.random() - 0.5) * 260,
             life: 0.6 + Math.random() * 0.5,
@@ -4129,7 +4140,7 @@ function drawHelicopterShadow(h) {
   const scale = 1 + h.altitude / 200;
   ctx.fillStyle = 'rgba(0,0,0,0.35)';
   ctx.beginPath();
-  ctx.ellipse(sx, sy, 22 * scale, 8 * scale, 0, 0, Math.PI*2);
+  ctx.ellipse(sx, sy, 28 * scale, 11 * scale, 0, 0, Math.PI*2);
   ctx.fill();
 }
 
@@ -4145,44 +4156,44 @@ function drawHelicopter(h) {
   ctx.save();
   ctx.rotate(h.rotorAngle);
   ctx.fillStyle = 'rgba(40,40,40,0.55)';
-  ctx.fillRect(-30, -1.5, 60, 3);
+  ctx.fillRect(-40, -2, 80, 4);
   ctx.restore();
 
-  // Cabin — slimmer rounded body
+  // Cabin — bigger overall silhouette
   ctx.fillStyle = '#3a4a32';
-  roundRect(-9, -12, 18, 24, 5);
+  roundRect(-12, -16, 24, 32, 6);
   ctx.fillStyle = '#536648';
-  roundRect(-7, -10, 14, 5, 2);                  // top deck highlight
-  // Cockpit canopy — small rounded bubble at the front (no longer fat/long)
+  roundRect(-9, -13, 18, 7, 3);                  // top deck highlight
+  // Cockpit canopy — rounded bubble at the front
   ctx.fillStyle = '#1a2030';
   ctx.beginPath();
-  ctx.ellipse(0, -10, 6, 5, 0, 0, Math.PI*2);
+  ctx.ellipse(0, -13, 8, 6, 0, 0, Math.PI*2);
   ctx.fill();
-  // Tail boom — longer shaft so the silhouette reads as a helicopter
+  // Tail boom — long shaft so the silhouette reads as a helicopter
   ctx.fillStyle = '#3a4a32';
-  ctx.fillRect(-2.5, 10, 5, 28);
+  ctx.fillRect(-3, 14, 6, 34);
   // Tail rotor — small spinning prop on the boom
   ctx.save();
-  ctx.translate(0, 38);
+  ctx.translate(0, 48);
   ctx.rotate(h.rotorAngle * 1.6);
   ctx.fillStyle = 'rgba(60,60,60,0.6)';
-  ctx.fillRect(-7, -0.7, 14, 1.4);
+  ctx.fillRect(-9, -0.9, 18, 1.8);
   ctx.restore();
   // Tail fin near the rear of the boom
   ctx.fillStyle = '#536648';
-  ctx.fillRect(-3.5, 34, 7, 3);
+  ctx.fillRect(-4.5, 43, 9, 4);
   // Landing skids (faint, top-down view)
   ctx.fillStyle = '#222';
-  ctx.fillRect(-10, -6, 1.2, 18);
-  ctx.fillRect( 8.8, -6, 1.2, 18);
+  ctx.fillRect(-13, -8, 1.5, 22);
+  ctx.fillRect( 11.5, -8, 1.5, 22);
   // Side markings — red star on each side
   ctx.fillStyle = '#cc2222';
-  ctx.fillRect(-6, -1, 3, 3);
-  ctx.fillRect( 3, -1, 3, 3);
+  ctx.fillRect(-8, -1, 4, 4);
+  ctx.fillRect( 4, -1, 4, 4);
   // Rotor hub
   ctx.fillStyle = '#1a1a1a';
   ctx.beginPath();
-  ctx.arc(0, -1, 2.5, 0, Math.PI*2);
+  ctx.arc(0, -1, 3, 0, Math.PI*2);
   ctx.fill();
 
   ctx.restore();
@@ -4252,6 +4263,16 @@ function drawParticles() {
 }
 
 function drawSteeringBand() {
+  // Visible border strip between the road and the steering band so the
+  // player can tell where the control zone starts.
+  const borderTop = BAND_TOP - BAND_BORDER_GAP;
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(0, borderTop, VW, BAND_BORDER_GAP);
+  // Two thin yellow stripes hint at a road shoulder
+  ctx.fillStyle = 'rgba(255, 204, 0, 0.55)';
+  ctx.fillRect(0, borderTop + 2, VW, 1);
+  ctx.fillRect(0, BAND_TOP - 2, VW, 1);
+
   const bandGrad = ctx.createLinearGradient(0, BAND_TOP, 0, VH);
   bandGrad.addColorStop(0, 'rgba(20, 30, 25, 0.85)');
   bandGrad.addColorStop(1, 'rgba(10, 18, 14, 0.95)');
