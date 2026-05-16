@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v20';
+    const CACHE='spyhunter-v21';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -1593,7 +1593,9 @@ const MIN_CAR_GAP = 90;
 // === Weapons system entities ===
 const oilSlicks = [];     // {x, z, life, lifeMax}
 const weaponsVans = [];   // mid-play weapons trucks (separate from rescue truck)
-let weaponsVanSpawnTimer = 18;   // time to next weapons van
+let weaponsVanSpawnTimer = 12;   // time to first weapons van — short enough that
+                                 // a Lvl-1 player learns the pickup mechanic before
+                                 // the first chaser problem appears
 
 // ============================================================
 // CRASH / RESCUE
@@ -1671,7 +1673,7 @@ function startGame() {
   truck = null;
   oilSlicks.length = 0;
   weaponsVans.length = 0;
-  weaponsVanSpawnTimer = 18;
+  weaponsVanSpawnTimer = 12;
   warningTimer = 0;
   levelBannerTimer = 0;
   currentLevel = 1;
@@ -2612,7 +2614,7 @@ function update(dt) {
   engineUpdate(dt);
 
   // === Weapons van spawn timer ===
-  if (gameMode === 'playing' && currentLevel >= 2 && weaponsVans.length === 0) {
+  if (gameMode === 'playing' && weaponsVans.length === 0) {
     weaponsVanSpawnTimer -= dt;
     if (weaponsVanSpawnTimer <= 0) {
       // Pick a weapon. Missiles unlock at Lvl 2+ alongside Bulletproof
