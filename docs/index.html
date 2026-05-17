@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v22';
+    const CACHE='spyhunter-v23';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -1791,22 +1791,32 @@ function updateTruck(dt) {
       truck.speed = 0;
     }
   } else if (truck.state === 'slowing') {
-    // Hold position while ramp opens
-    if (truck.stateTime > 0.7) {
-      truck.state = 'dropping';
+    // Hold position while ramp opens. Player stays INSIDE the truck (not
+    // rendered) for a beat so the rescue reads as a real pickup rather
+    // than an instant respawn.
+    if (truck.stateTime > 1.1) {
+      truck.state = 'emerging';
       truck.stateTime = 0;
-      // Spawn player at truck X
+      // Player respawns aligned with truck X, starts inside the trailer
       player.x = truck.x;
       player.alive = true;
-      player.invincibleTimer = 2.5;
-      gameMode = 'playing';
+      player.emerging = true;
+      player.emergeT = 0;
+      // No invincibility blink yet — that starts after the player has
+      // fully slid down the ramp.
     }
-  } else if (truck.state === 'dropping') {
-    // Brief beat before truck pulls away
-    if (truck.stateTime > 0.45) {
+  } else if (truck.state === 'emerging') {
+    // Slide the player out the back of the trailer over ~0.7 seconds
+    const DUR = 0.7;
+    player.emergeT = Math.min(1, truck.stateTime / DUR);
+    if (truck.stateTime > DUR) {
       truck.state = 'leaving';
       truck.stateTime = 0;
-      truck.speed = 80;   // start pulling forward (zOffset increases)
+      truck.speed = 80;                  // start pulling forward
+      player.emerging = false;
+      player.emergeT = 1;
+      player.invincibleTimer = 1.6;      // NOW invincibility blink begins
+      gameMode = 'playing';
     }
   } else if (truck.state === 'leaving') {
     truck.zOffset += truck.speed * dt;
@@ -1896,18 +1906,35 @@ function update(dt) {
   }
 
   // Missiles — forward-firing player ordnance. Faster than bullets,
-  // leaves a smoke trail, instant-kills any enemy on contact.
+  // leaves a smoke trail, instant-kills any enemy on contact. Missiles
+  // also automatically rise in altitude when a helicopter is ahead, so
+  // they visibly arc up to meet it instead of vanishing immediately.
   for (let i = missiles.length - 1; i >= 0; i--) {
     const m = missiles[i];
     m.z += m.vz * dt;
     m.life -= dt;
     m.smokeTimer -= dt;
-    // Smoke trail
+    // Auto-rise to match an incoming helicopter's altitude
+    let targetAlt = 0;
+    let nearestHd = Infinity;
+    for (const h of helicopters) {
+      const hdz = h.z - m.z;
+      const hdx = Math.abs(h.x - m.x);
+      // Heli ahead of (or alongside) missile, within forward cone
+      if (hdz > -40 && hdz < 260 && hdx < 70) {
+        if (Math.abs(hdz) < nearestHd) {
+          nearestHd = Math.abs(hdz);
+          targetAlt = h.altitude;
+        }
+      }
+    }
+    m.altitude += (targetAlt - m.altitude) * Math.min(1, dt * 5);
+    // Smoke trail (positioned at missile's lifted screen-y)
     if (m.smokeTimer <= 0) {
       m.smokeTimer = 0.02;
       particles.push({
         x: m.x + (Math.random() - 0.5) * 3,
-        z: m.z - 6,
+        z: m.z - 6 + m.altitude,
         vx: (Math.random() - 0.5) * 25,
         vz: -10 - Math.random() * 18,
         life: 0.45,
@@ -1918,12 +1945,16 @@ function update(dt) {
       missiles.splice(i, 1);
       continue;
     }
-    // Enemy collision — instant kill regardless of bulletproof
+    // Enemy collision — instant kill regardless of bulletproof. Missile
+    // must be at ground-ish altitude to hit road traffic; once it's
+    // climbing for a helicopter it sails over cars instead of striking them.
     let consumed = false;
+    const missileNearGround = (m.altitude || 0) < 35;
     for (let j = enemies.length - 1; j >= 0; j--) {
       const e = enemies[j];
       if (e.state !== 'alive') continue;
       if (e.faction === 'civilian') continue;       // missiles only target enemies
+      if (!missileNearGround) continue;
       if (Math.abs(m.z - e.z) < 22 && Math.abs(m.x - e.x) < 16) {
         sfxMissileBoom();
         explode(e.x, e.z, '#ffaa44', 28);
@@ -2980,7 +3011,10 @@ function updateHelicopters(dt) {
     // at the road level under it.
     for (let j = missiles.length - 1; j >= 0; j--) {
       const m = missiles[j];
-      if (Math.abs(m.z - h.z) < 32 && Math.abs(m.x - h.x) < 32) {
+      // Require the missile to be (a) close in x/z AND (b) at roughly the
+      // helicopter's altitude — otherwise it just whooshes past underneath.
+      const altDiff = Math.abs((m.altitude || 0) - h.altitude);
+      if (Math.abs(m.z - h.z) < 20 && Math.abs(m.x - h.x) < 26 && altDiff < 30) {
         sfxMissileBoom();
         const boomZ = h.z + h.altitude;   // visually lifts particles to chopper height
         explode(h.x, boomZ, '#ffaa44', 36);
@@ -3257,6 +3291,7 @@ function fireMissile() {
     vz: 900,                  // faster than gun bullets
     smokeTimer: 0,
     life: 1.6,
+    altitude: 0,              // ramps upward toward a helicopter ahead
   });
   // Muzzle smoke puff
   for (let k = 0; k < 8; k++) {
@@ -3530,8 +3565,18 @@ function drawPlayerCar(cx, cy, rotation) {
 
 function drawPlayer() {
   if (!player.alive) return;
-  if (player.invincibleTimer > 0 && Math.floor(player.invincibleTimer * 12) % 2 === 0) return;
   const px = ROAD.centerX + player.x;
+  // During the emerge animation the player slides from inside the truck
+  // (at truck-center screen Y) down to their normal driving position. No
+  // blinking during this phase — it's a triumphal exit, not a stagger.
+  if (player.emerging) {
+    const playerY = getPlayerScreenY();
+    const startY = playerY - 38;         // roughly inside the trailer body
+    const py = startY + (playerY - startY) * (player.emergeT || 0);
+    drawPlayerCar(px, py, 0);
+    return;
+  }
+  if (player.invincibleTimer > 0 && Math.floor(player.invincibleTimer * 12) % 2 === 0) return;
   drawPlayerCar(px, getPlayerScreenY(), 0);
 }
 
@@ -3945,7 +3990,7 @@ function drawTruck(t) {
   roundRect(-w/2, -h/2 + 22, w, h - 22, 2);
   ctx.fillStyle = '#777777';
   ctx.fillRect(-w/2 + 3, -h/2 + 30, w - 6, h - 50);
-  if (t.state === 'slowing' || t.state === 'dropping') {
+  if (t.state === 'slowing' || t.state === 'emerging') {
     ctx.fillStyle = '#222';
     ctx.fillRect(-w/2 + 4, h/2 - 16, w - 8, 14);
     ctx.fillStyle = '#555';
@@ -4176,8 +4221,10 @@ function drawEnemyBullet(b) {
 }
 
 function drawMissile(m) {
-  const sy = zToScreenY(m.z);
-  if (sy < PLAY_TOP - 14 || sy > PLAY_BOTTOM + 6) return;
+  const groundY = zToScreenY(m.z);
+  if (groundY < PLAY_TOP - 60 || groundY > PLAY_BOTTOM + 6) return;
+  // Lift the rocket by its altitude so it visibly arcs up to meet a heli
+  const sy = groundY - (m.altitude || 0);
   const sx = ROAD.centerX + m.x;
   // Body: silver/grey rocket
   ctx.fillStyle = '#cccccc';
