@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v25';
+    const CACHE='spyhunter-v26';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -1922,29 +1922,42 @@ function update(dt) {
   }
 
   // Missiles — forward-firing player ordnance. Faster than bullets,
-  // leaves a smoke trail, instant-kills any enemy on contact. Missiles
-  // also automatically rise in altitude when a helicopter is ahead, so
-  // they visibly arc up to meet it instead of vanishing immediately.
+  // leaves a smoke trail, instant-kills any enemy on contact. When a
+  // helicopter is in the forward cone the missile *homes* on it: lifts
+  // altitude, drifts in x, and decelerates if it overshoots in z so the
+  // chopper "catches up" — guarantees a hit if the lock holds.
   for (let i = missiles.length - 1; i >= 0; i--) {
     const m = missiles[i];
-    m.z += m.vz * dt;
-    m.life -= dt;
     m.smokeTimer -= dt;
-    // Auto-rise to match an incoming helicopter's altitude
-    let targetAlt = 0;
-    let nearestHd = Infinity;
+    // Find the nearest helicopter ahead-of-or-near the missile to lock on
+    let target = null;
+    let targetScore = Infinity;
     for (const h of helicopters) {
       const hdz = h.z - m.z;
       const hdx = Math.abs(h.x - m.x);
-      // Heli ahead of (or alongside) missile, within forward cone
-      if (hdz > -40 && hdz < 260 && hdx < 70) {
-        if (Math.abs(hdz) < nearestHd) {
-          nearestHd = Math.abs(hdz);
-          targetAlt = h.altitude;
-        }
+      // Slightly wider rear allowance so heli at trackPos and missile at
+      // trackPos+30 still locks
+      if (hdz > -120 && hdz < 280 && hdx < 90) {
+        const score = Math.abs(hdz) + hdx * 0.5;
+        if (score < targetScore) { targetScore = score; target = h; }
       }
     }
-    m.altitude += (targetAlt - m.altitude) * Math.min(1, dt * 5);
+    if (target) {
+      // Lift altitude fast toward heli's altitude
+      m.altitude += (target.altitude - m.altitude) * Math.min(1, dt * 10);
+      // Gentle x homing
+      m.x += (target.x - m.x) * Math.min(1, dt * 4);
+      // If missile overshot heli in z, decelerate so heli catches up
+      const dzToTarget = target.z - m.z;
+      if (dzToTarget < -8) {
+        m.vz = Math.max(40, m.vz - 1800 * dt);
+      }
+    } else {
+      // No target — drift altitude back to 0
+      m.altitude += (0 - m.altitude) * Math.min(1, dt * 5);
+    }
+    m.z += m.vz * dt;
+    m.life -= dt;
     // Smoke trail (positioned at missile's lifted screen-y)
     if (m.smokeTimer <= 0) {
       m.smokeTimer = 0.02;
@@ -2011,7 +2024,7 @@ function update(dt) {
     }
     // Hit the player
     if (gameMode === 'playing' && player.alive && player.invincibleTimer <= 0 &&
-        Math.abs(b.z - trackPos) < 10 && Math.abs(b.x - player.x) < 12) {
+        Math.abs(b.z - trackPos) < 16 && Math.abs(b.x - player.x) < 14) {
       enemyBullets.splice(i, 1);
       triggerCrash(player.x);
     }
@@ -2966,19 +2979,20 @@ function updateEnforcer(e, dt, speedWorldRef) {
 }
 
 function fireEnemyBullet(e) {
-  // Fire from the side of the limo facing the player. Aim toward the
-  // player's current position with a fixed travel speed.
+  // Fire HORIZONTALLY from the limo's passenger-side window — straight
+  // across at the player's lane. To keep z-alignment as the player drives
+  // forward, the bullet also inherits the player's world speed in z.
+  // Without that, the bullet stays at a fixed z and the player drives
+  // out from under it before it crosses their column.
   const fromX = e.x - e.enforcerSide * 10;        // muzzle on inboard side
   const fromZ = e.z;
-  const dx = player.x - fromX;
-  const dz = trackPos - fromZ;
-  const len = Math.hypot(dx, dz) || 1;
-  const speed = 320;
+  const speed = 300;
+  const playerWorldSpeed = Math.max(player.speed * player.maxSpeed, 60);
   enemyBullets.push({
     x: fromX, z: fromZ,
-    vx: (dx / len) * speed,
-    vz: (dz / len) * speed,
-    life: 1.6,
+    vx: -e.enforcerSide * speed,                  // purely sideways toward player
+    vz: playerWorldSpeed,                          // travel forward with the player
+    life: 1.0,
   });
   // Muzzle flash
   for (let k = 0; k < 4; k++) {
@@ -3082,10 +3096,10 @@ function updateHelicopters(dt) {
     // at the road level under it.
     for (let j = missiles.length - 1; j >= 0; j--) {
       const m = missiles[j];
-      // Require the missile to be (a) close in x/z AND (b) at roughly the
-      // helicopter's altitude — otherwise it just whooshes past underneath.
+      // Generous collision because the missile now homes — once the lock
+      // visually intersects the chopper the kill should fire reliably.
       const altDiff = Math.abs((m.altitude || 0) - h.altitude);
-      if (Math.abs(m.z - h.z) < 20 && Math.abs(m.x - h.x) < 26 && altDiff < 30) {
+      if (Math.abs(m.z - h.z) < 50 && Math.abs(m.x - h.x) < 40 && altDiff < 40) {
         sfxMissileBoom();
         const boomZ = h.z + h.altitude;   // visually lifts particles to chopper height
         explode(h.x, boomZ, '#ffaa44', 36);
@@ -3361,10 +3375,10 @@ function fireMissile() {
   sfxMissileFire();
   missiles.push({
     x: player.x,
-    z: trackPos + 30,
+    z: trackPos + 10,         // start near player so a heli right above isn't already past us
     vz: 900,                  // faster than gun bullets
     smokeTimer: 0,
-    life: 1.6,
+    life: 1.8,
     altitude: 0,              // ramps upward toward a helicopter ahead
   });
   // Muzzle smoke puff
