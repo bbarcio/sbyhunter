@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v23';
+    const CACHE='spyhunter-v24';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -303,6 +303,10 @@ if('serviceWorker' in navigator){
 <div id="btn-music" title="Music on/off">♪</div>
 <div id="btn-sfx" title="SFX on/off">FX</div>
 
+<!-- Background music: "Jazz Spy Music" by Tunetank (Pixabay, free use).
+     Looped while the player is alive. The ♪ button on the HUD controls it. -->
+<audio id="bgm" src="tunetank-jazz-spy-music-349626.mp3" loop preload="auto" playsinline webkit-playsinline></audio>
+
 <div id="overlay">
   <h1>SPY HUNTER</h1>
   <h2>G-6155 INTERCEPTOR</h2>
@@ -318,7 +322,8 @@ if('serviceWorker' in navigator){
     Catch the gray <span class="key">WEAPONS VAN</span> from behind to upgrade.<br>
     Tap <span class="key">MSL</span> for a missile — one-shot kills any enemy!<br>
     Drop <span class="key">OIL</span> behind you to spin out chasers!<br>
-    <span class="warn">DO NOT</span> shoot civilians.
+    <span class="warn">DO NOT</span> shoot civilians.<br>
+    <span style="font-size:9px; opacity:0.5;">Music: "Jazz Spy Music" by Tunetank (Pixabay)</span>
   </p>
   <button id="start-btn">START MISSION</button>
 </div>
@@ -795,7 +800,11 @@ function iosAudioSessionPrime() {
 
 function audioSetMusicMuted(m) {
   AUDIO.musicMuted = m;
+  // Web Audio path (currently dormant — kept around as fallback)
   if (AUDIO.musicGain) AUDIO.musicGain.gain.value = m ? 0 : MUSIC_GAIN;
+  // HTML5 <audio> element path — this is what actually plays
+  const bgm = document.getElementById('bgm');
+  if (bgm) bgm.volume = m ? 0 : 0.45;
   try { localStorage.setItem('sbyhunter.musicMuted', m ? '1' : '0'); } catch(e) {}
   refreshAudioBtns();
   if (m) musicStop();
@@ -810,16 +819,23 @@ function audioSetSfxMuted(m) {
 }
 
 function musicStart() {
-  if (!AUDIO.ctx || AUDIO.musicPlaying || AUDIO.musicMuted) return;
-  AUDIO.musicPlaying = true;
-  AUDIO.musicStep = 0;
-  AUDIO.musicNextNoteTime = AUDIO.ctx.currentTime + 0.08;
-  if (AUDIO.musicTimer) clearInterval(AUDIO.musicTimer);
-  AUDIO.musicTimer = setInterval(musicScheduler, 25);
+  if (AUDIO.musicMuted) return;
+  const bgm = document.getElementById('bgm');
+  if (bgm) {
+    bgm.volume = 0.45;
+    const p = bgm.play();
+    if (p && p.catch) p.catch(() => {});  // ignored autoplay rejections
+    AUDIO.musicPlaying = true;
+  }
 }
 
 function musicStop() {
   AUDIO.musicPlaying = false;
+  const bgm = document.getElementById('bgm');
+  if (bgm) {
+    bgm.pause();
+    bgm.currentTime = 0;
+  }
   if (AUDIO.musicTimer) { clearInterval(AUDIO.musicTimer); AUDIO.musicTimer = null; }
 }
 
