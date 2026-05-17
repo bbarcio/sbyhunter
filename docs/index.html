@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v24';
+    const CACHE='spyhunter-v25';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -1851,7 +1851,7 @@ function update(dt) {
 
   let targetX = player.x;
   let targetSpeed = player.speed;
-  if (gameMode === 'playing' && input.dragging) {
+  if (gameMode === 'playing' && input.dragging && !player.inDelivery) {
     targetX = ((input.dragX / VW) - 0.5) * 2 * (VW * 0.45);
     // dragY is clamped to [BAND_TOP_USABLE, VH] — rescale so vy=1 at the
     // usable-top edge, vy=0 at the band bottom.
@@ -2775,6 +2775,57 @@ function updateWeaponsVans(dt) {
     v.stateTimer += dt;
     v.z += v.vz * dt;
 
+    // Pickup cinematic — runs in parallel with whatever the van's state is
+    // (we keep the van's state in 'waiting' so the ramp stays drawn).
+    if (v.deliveryStage) {
+      v.deliveryTimer += dt;
+      // Keep the player snapped to the van's x while the animation plays
+      player.x = v.x;
+      if (v.deliveryStage === 'absorbing') {
+        // 0.45 s slide UP into the trailer, fading out
+        player.deliveryT = Math.min(1, v.deliveryTimer / 0.45);
+        if (v.deliveryTimer >= 0.45) {
+          v.deliveryStage = 'holding';
+          v.deliveryTimer = 0;
+          player.deliveryT = 1;
+        }
+      } else if (v.deliveryStage === 'holding') {
+        // 0.55 s inside the trailer — player invisible, ammo already
+        // credited in deliverWeapon()
+        if (v.deliveryTimer >= 0.55) {
+          v.deliveryStage = 'releasing';
+          v.deliveryTimer = 0;
+        }
+      } else if (v.deliveryStage === 'releasing') {
+        // 0.65 s slide DOWN back out of the trailer with smoke
+        player.deliveryT = 1 - Math.min(1, v.deliveryTimer / 0.65);
+        if (v.deliveryTimer < 0.35) {
+          for (let k = 0; k < 2; k++) {
+            particles.push({
+              x: v.x + (Math.random() - 0.5) * 14,
+              z: trackPos - 4,
+              vx: (Math.random() - 0.5) * 80,
+              vz: -20 - Math.random() * 40,
+              life: 0.55 + Math.random() * 0.2,
+              color: 'rgba(180,180,185,0.7)'
+            });
+          }
+        }
+        if (v.deliveryTimer >= 0.65) {
+          v.deliveryStage = null;
+          player.inDelivery = false;
+          player.deliveryT = 0;
+          player.invincibleTimer = 1.4;     // blink starts NOW
+          v.state = 'delivered_exit';
+          v.stateTimer = 0;
+        }
+      }
+      // While the animation runs, hold the van at a steady speed so the
+      // player doesn't visually drift out of the trailer.
+      v.vz = (player.speed * player.maxSpeed) * 0.85;
+      continue;
+    }
+
     // Despawn if way behind player
     if (v.z < trackPos - 200) {
       weaponsVans.splice(i, 1);
@@ -2831,13 +2882,17 @@ function updateWeaponsVans(dt) {
 
 function deliverWeapon(v) {
   v.delivered = true;
-  v.state = 'delivered_exit';
-  v.stateTimer = 0;
+  // Kick off the cinematic three-beat pickup:
+  //   absorbing → holding → releasing → delivered_exit
+  v.deliveryStage = 'absorbing';
+  v.deliveryTimer = 0;
+  player.inDelivery = true;
+  player.deliveryT = 0;
+  player.x = v.x;                    // snap into the trailer doorway
+  player.invincibleTimer = Math.max(player.invincibleTimer, 99); // immune during the animation
   // Top up the relevant ammo by 5, capped at max
   const type = v.weaponType;
   player.ammo[type] = Math.min(player.ammoMax, player.ammo[type] + 5);
-  // Brief invincibility so player doesn't get rammed mid-pickup
-  player.invincibleTimer = Math.max(player.invincibleTimer, 1.0);
   // Score + visual sparkle
   player.score += 250;
   sfxPickup();
@@ -3128,8 +3183,11 @@ function spawnEnforcer() {
   // player catches up). Either way, spawn OFF-screen so it visibly enters
   // rather than popping into the middle of the playfield.
   const fromBehind = Math.random() < 0.5;
+  // From behind: 40 px below the current visible play area, scaled by the
+  // player's screen position so it works at any speed/lift.
+  const rearOffscreen = (PLAY_BOTTOM - getPlayerScreenY()) + 40;
   const spawnZ = fromBehind
-    ? trackPos - 100
+    ? trackPos - rearOffscreen
     : trackPos + PLAY_HEIGHT + 50;
   const side = Math.random() < 0.5 ? -1 : 1;
   const offset = 42;
@@ -3582,18 +3640,27 @@ function drawPlayerCar(cx, cy, rotation) {
 function drawPlayer() {
   if (!player.alive) return;
   const px = ROAD.centerX + player.x;
-  // During the emerge animation the player slides from inside the truck
-  // (at truck-center screen Y) down to their normal driving position. No
-  // blinking during this phase — it's a triumphal exit, not a stagger.
+  const baseY = getPlayerScreenY();
+  // Truck-rescue emerge — slides from inside the trailer down to baseY
   if (player.emerging) {
-    const playerY = getPlayerScreenY();
-    const startY = playerY - 38;         // roughly inside the trailer body
-    const py = startY + (playerY - startY) * (player.emergeT || 0);
+    const startY = baseY - 38;
+    const py = startY + (baseY - startY) * (player.emergeT || 0);
     drawPlayerCar(px, py, 0);
     return;
   }
+  // Weapons-van pickup — same idea but driven by deliveryT and faded so
+  // the car visually dissolves into / out of the trailer.
+  if (player.inDelivery) {
+    const insideY = baseY - 30;
+    const t = player.deliveryT || 0;
+    const py = baseY + (insideY - baseY) * t;
+    ctx.globalAlpha = Math.max(0, 1 - t);
+    drawPlayerCar(px, py, 0);
+    ctx.globalAlpha = 1;
+    return;
+  }
   if (player.invincibleTimer > 0 && Math.floor(player.invincibleTimer * 12) % 2 === 0) return;
-  drawPlayerCar(px, getPlayerScreenY(), 0);
+  drawPlayerCar(px, baseY, 0);
 }
 
 function drawSwitchblade(cx, cy, rotation, damage) {
