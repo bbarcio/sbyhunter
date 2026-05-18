@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v26';
+    const CACHE='spyhunter-v27';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -2633,6 +2633,39 @@ function update(dt) {
     }
   }
 
+  // === Car-vs-weapons-van collisions ===
+  // Cars no longer drive through the gray weapons van. Push them apart
+  // along the smaller overlap axis and damp their velocity along that
+  // axis. The van is unaffected (it's a much heavier truck).
+  for (const v of weaponsVans) {
+    const vanXR = 22;                            // van half-width
+    const vanZR = 45;                            // van half-length
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      if (e.state !== 'alive') continue;
+      const eXR = e.type === 'motorcycle' ? 8  : e.type === 'enforcer' ? 16 : 13;
+      const eZR = e.type === 'enforcer' ? 28 : 20;
+      const ddx = e.x - v.x;
+      const ddz = e.z - v.z;
+      const xR = vanXR + eXR;
+      const zR = vanZR + eZR;
+      if (Math.abs(ddx) >= xR || Math.abs(ddz) >= zR) continue;
+      const xOverlap = xR - Math.abs(ddx);
+      const zOverlap = zR - Math.abs(ddz);
+      if (xOverlap < zOverlap) {
+        // Push out laterally (most common — cars sliding alongside)
+        const dir = ddx === 0 ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(ddx);
+        e.x = v.x + dir * xR;
+        e.vx = dir * Math.abs(e.vx) * 0.6;
+      } else {
+        // Push out longitudinally
+        const dir = Math.sign(ddz) || -1;
+        e.z = v.z + dir * zR;
+        e.vz *= 0.6;
+      }
+    }
+  }
+
   // Trees
   if (gameMode === 'playing' && player.alive && player.invincibleTimer <= 0) {
     const playerScreenX = ROAD.centerX + player.x;
@@ -2792,11 +2825,13 @@ function updateWeaponsVans(dt) {
     // (we keep the van's state in 'waiting' so the ramp stays drawn).
     if (v.deliveryStage) {
       v.deliveryTimer += dt;
+      const playerWorldSpeed = player.speed * player.maxSpeed;
       // Keep the player snapped to the van's x while the animation plays
       player.x = v.x;
       if (v.deliveryStage === 'absorbing') {
         // 0.45 s slide UP into the trailer, fading out
         player.deliveryT = Math.min(1, v.deliveryTimer / 0.45);
+        v.vz = playerWorldSpeed * 0.95;
         if (v.deliveryTimer >= 0.45) {
           v.deliveryStage = 'holding';
           v.deliveryTimer = 0;
@@ -2805,26 +2840,35 @@ function updateWeaponsVans(dt) {
       } else if (v.deliveryStage === 'holding') {
         // 0.55 s inside the trailer — player invisible, ammo already
         // credited in deliverWeapon()
+        v.vz = playerWorldSpeed * 0.95;
         if (v.deliveryTimer >= 0.55) {
           v.deliveryStage = 'releasing';
           v.deliveryTimer = 0;
         }
       } else if (v.deliveryStage === 'releasing') {
-        // 0.65 s slide DOWN back out of the trailer with smoke
-        player.deliveryT = 1 - Math.min(1, v.deliveryTimer / 0.65);
-        if (v.deliveryTimer < 0.35) {
+        // 0.7 s slide DOWN back out of the trailer with smoke. The van
+        // ACCELERATES during this beat so it visibly pulls ahead of the
+        // player — the player car drops out the back as the trailer
+        // climbs away up the screen.
+        const RELEASE_DUR = 0.7;
+        const releaseT = Math.min(1, v.deliveryTimer / RELEASE_DUR);
+        player.deliveryT = 1 - releaseT;
+        // Ramp van from player-pace up to ~145% of player speed
+        v.vz = playerWorldSpeed * (1.0 + releaseT * 0.45);
+        // Smoke from the trailer rear in the first half of the slide
+        if (releaseT < 0.55) {
           for (let k = 0; k < 2; k++) {
             particles.push({
               x: v.x + (Math.random() - 0.5) * 14,
-              z: trackPos - 4,
+              z: v.z - 40,    // at the trailer rear in world Z
               vx: (Math.random() - 0.5) * 80,
               vz: -20 - Math.random() * 40,
               life: 0.55 + Math.random() * 0.2,
-              color: 'rgba(180,180,185,0.7)'
+              color: 'rgba(180,180,185,0.75)'
             });
           }
         }
-        if (v.deliveryTimer >= 0.65) {
+        if (v.deliveryTimer >= RELEASE_DUR) {
           v.deliveryStage = null;
           player.inDelivery = false;
           player.deliveryT = 0;
@@ -2833,9 +2877,6 @@ function updateWeaponsVans(dt) {
           v.stateTimer = 0;
         }
       }
-      // While the animation runs, hold the van at a steady speed so the
-      // player doesn't visually drift out of the trailer.
-      v.vz = (player.speed * player.maxSpeed) * 0.85;
       continue;
     }
 
