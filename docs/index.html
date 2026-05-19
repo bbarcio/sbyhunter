@@ -233,7 +233,7 @@ margin-top: 8px;
 // ── PWA: Inline service worker (stale-while-revalidate) ──
 if('serviceWorker' in navigator){
   const swCode=`
-    const CACHE='spyhunter-v27';
+    const CACHE='spyhunter-v28';
     self.addEventListener('install',e=>{
       e.waitUntil(
         caches.open(CACHE).then(c=>c.addAll([self.location.href]))
@@ -1822,13 +1822,19 @@ function updateTruck(dt) {
       // fully slid down the ramp.
     }
   } else if (truck.state === 'emerging') {
-    // Slide the player out the back of the trailer over ~0.7 seconds
+    // Slide the player out the back of the trailer over ~0.7 seconds.
+    // The truck also pulls AHEAD during this beat so the trailer
+    // visibly climbs up the screen — that, plus rendering the player
+    // BEHIND the truck, makes the car appear to roll out from under
+    // the trailer rather than materialising inside it.
     const DUR = 0.7;
     player.emergeT = Math.min(1, truck.stateTime / DUR);
+    truck.speed = 60 + 180 * player.emergeT;        // ramps 60 → 240 px/s
+    truck.zOffset += truck.speed * dt;
     if (truck.stateTime > DUR) {
       truck.state = 'leaving';
       truck.stateTime = 0;
-      truck.speed = 80;                  // start pulling forward
+      truck.speed = Math.max(truck.speed, 120);     // carry forward speed into leaving
       player.emerging = false;
       player.emergeT = 1;
       player.invincibleTimer = 1.6;      // NOW invincibility blink begins
@@ -2381,8 +2387,11 @@ function update(dt) {
               e.state = 'spinning';
               e.stateTime = 0;
               e.spin = 0;
-              e.spinSpeed = (Math.random() < 0.5 ? -1 : 1) * (10 + Math.random() * 6);
-              const driftSide = Math.random() < 0.5 ? -1 : 1;
+              // Drift toward whichever road edge is closer so the wreck
+              // clears the lane instead of falling straight back through
+              // the player's path.
+              const driftSide = e.x === 0 ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(e.x);
+              e.spinSpeed = driftSide * (10 + Math.random() * 6);
               const angleDeg = 15 + Math.random() * 15;
               const angleRad = angleDeg * Math.PI / 180;
               // Spun-out cars lose most forward speed — they drift backward relative to us
@@ -2609,16 +2618,19 @@ function update(dt) {
         // and Enforcer shrug it off but still bounce.
         const vulnerable = (e) => !e.bulletproof && e.type !== 'enforcer';
         const playerWorldSpeed = player.speed * player.maxSpeed;
-        const spinOut = (e, signDir) => {
+        const spinOut = (e, fallbackDir) => {
           if (!vulnerable(e)) return;
+          // Drift toward whichever road edge is closer; use the bump
+          // direction as a fallback for cars right in the middle.
+          const driftSide = e.x === 0 ? fallbackDir : Math.sign(e.x);
           e.state = 'spinning';
           e.stateTime = 0;
           e.spin = 0;
-          e.spinSpeed = signDir * (10 + Math.random() * 8);
+          e.spinSpeed = driftSide * (10 + Math.random() * 8);
           const angleDeg = 15 + Math.random() * 20;
           const angleRad = angleDeg * Math.PI / 180;
           const remainingForward = playerWorldSpeed * (0.30 + Math.random() * 0.15);
-          e.vx = signDir * Math.sin(angleRad) * 90;
+          e.vx = driftSide * Math.sin(angleRad) * 90;
           e.vz = remainingForward * Math.cos(angleRad);
           e.targetTree = null;
         };
@@ -2801,8 +2813,9 @@ function updateOilSlicks(dt) {
         e.state = 'spinning';
         e.stateTime = 0;
         e.spin = 0;
-        e.spinSpeed = (Math.random() < 0.5 ? -1 : 1) * (12 + Math.random() * 8);
-        const driftSide = Math.random() < 0.5 ? -1 : 1;
+        // Oil-slick spin-out — head for the nearer road edge
+        const driftSide = e.x === 0 ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(e.x);
+        e.spinSpeed = driftSide * (12 + Math.random() * 8);
         const angleDeg = 25 + Math.random() * 25;
         const angleRad = angleDeg * Math.PI / 180;
         const playerWorldSpeed = player.speed * player.maxSpeed;
@@ -2853,8 +2866,11 @@ function updateWeaponsVans(dt) {
         const RELEASE_DUR = 0.7;
         const releaseT = Math.min(1, v.deliveryTimer / RELEASE_DUR);
         player.deliveryT = 1 - releaseT;
-        // Ramp van from player-pace up to ~145% of player speed
-        v.vz = playerWorldSpeed * (1.0 + releaseT * 0.45);
+        // Strong fixed pull-ahead so the trailer visibly climbs up the
+        // screen during the slide. Ramps from player-pace to player
+        // pace + 260 px/s — at cruise that's ~3x player speed, plenty
+        // of separation by the time release ends.
+        v.vz = playerWorldSpeed + releaseT * 260;
         // Smoke from the trailer rear in the first half of the slide
         if (releaseT < 0.55) {
           for (let k = 0; k < 2; k++) {
@@ -3494,7 +3510,23 @@ function render() {
   for (const t of trees) drawables.push({ kind: 'tree', ref: t, z: t.z });
   for (const e of enemies) drawables.push({ kind: 'enemy', ref: e, z: e.z });
   for (const w of wrecks) drawables.push({ kind: 'wreck', ref: w, z: w.z });
-  if (player.alive) drawables.push({ kind: 'player', z: trackPos });
+  if (player.alive) {
+    // Default: player renders just ahead of itself in z-order (i.e. on
+    // top of most things). During the truck-rescue emerge and the
+    // weapons-van delivery release we deliberately render the player
+    // BEHIND the truck/van so the trailer occludes them. Combined with
+    // the truck/van pulling ahead, the car visibly emerges from under
+    // the trailer rather than appearing on top of it.
+    let playerZ = trackPos;
+    if (player.emerging && truck) {
+      playerZ = trackPos + truck.zOffset + 5;
+    } else if (player.inDelivery) {
+      for (const vv of weaponsVans) {
+        if (vv.deliveryStage) { playerZ = vv.z + 5; break; }
+      }
+    }
+    drawables.push({ kind: 'player', z: playerZ });
+  }
   if (truck) drawables.push({ kind: 'truck', ref: truck, z: trackPos + truck.zOffset });
   for (const v of weaponsVans) drawables.push({ kind: 'weaponsvan', ref: v, z: v.z });
   drawables.sort((a, b) => b.z - a.z);
